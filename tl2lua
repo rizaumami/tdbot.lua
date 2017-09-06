@@ -1,0 +1,47 @@
+#!/bin/bash
+
+# __if it's ugly but it's works, then "it's ugly but it's works!"__
+
+# WHAT
+# Script to create a tdbot.lua basic structure from Telegram library file
+#
+# HOW
+# - Put this script and tl file(s) in a same directory
+# - Run this script, e.g by execute this command: ./tl2lua
+# - Lua file(s) with similar name to tl file(s) will then be generated
+
+tdbot='tdbot.lua'
+
+# Rename existing $tdbot filename
+if [[ -f "$tdbot" ]]; then
+  mv "${tdbot%.*}"{,-$(date +%F_%R:%S)}.lua
+  printf '\n%s\n' " -- tdbot.lua found. Rename it into ${tdbot%.*}-$(date +%F_%R:%S).lua"
+fi
+
+while read tl; do
+  # get lines after '---functions---' until the end of file
+  awk 'NR == 1, $0 ~ /---functions---/ {next}; {print}' "$tl" > "$tdbot"
+  # replace some caharacters
+  awk -i inplace '{gsub(/ @/, "\n-- @"); gsub(/^\/\/@description/, "--"); gsub(/^\/\/@/, "-- @"); gsub(/\. /, ".\n-- ")};1' "$tdbot"
+  awk -i inplace '/^[[:alpha:]]/{gsub(/ = .*;/, "")};1' "$tdbot"
+  # copy line
+  awk -i inplace '/^[[:alpha:]]/{print "-- function tdbot."$0};1' "$tdbot"
+  # insert strings 4th field and last field
+  awk -i inplace '/^-- function/{$3=$3"("; $NF=$NF", callback, data)\n  assert (tdbot_function ({"};1' "$tdbot"
+  # replace some caharacters
+  awk -i inplace '/^[[:alpha:]]/{$0=$0"\n  }, callback or dl_cb, data))\nend\n\n"};1' "$tdbot"
+  awk -i inplace '/^[[:alpha:]][[:alpha:]]/{gsub(/:/, "="); gsub(/ /, ",\n    ")};1' "$tdbot"
+  # format tl ID
+  awk -i inplace '/^[[:alpha:]][[:alpha:]]/{$1="    _ = '\''"$1"'\''"};1' "$tdbot"
+  # replace some caharacters
+  awk -i inplace '{gsub(/^-- function/, "function"); gsub(/    _ = '\''end'\''/, "end"); gsub(/,'\''/, "'\'',"); gsub(/\( /, "(")};1' "$tdbot"
+  awk -i inplace '/^function/{gsub(/_/, ""); gsub(/\(, /, "(")};1' "$tdbot"
+  awk -i inplace '/[[:alpha:]]=[[:alpha:]]/{gsub(/=/, " = ")};1' "$tdbot"
+  awk -i inplace '{gsub(/ = string/, " = tostring()")};1' "$tdbot"
+  # remove strings between colon (:) and space ( )
+  awk -i inplace '/^local function/{gsub(/:[^ ]* /, ", ")};1' "$tdbot"
+  # reduce multiple empty lines into one
+  awk -i inplace 'BEGIN{bl=0}/^$/{bl++;if(bl==1)print;else next}/^..*$/{bl=0;print}' "$tdbot"
+done < <(find . -type f -iname "telegram-bot*.tl")
+
+printf '\n%s\n\n' " -- New tdbot.lua has been successfully created."
