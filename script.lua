@@ -51,15 +51,15 @@ function tdbot_update_callback (data)
 
       local input = msg.content.text
 
-      if input == '^/pang' then
+      if input:match('^/pang$') then
         tdbot.getMe()
-      elseif input == '^/peng' then
+      elseif input:match('^/peng$') then
         -- tdbot.
-      elseif input == '^/ping' then
+      elseif input:match('^/ping$') then
         -- tdbot.
-      elseif input == '^/pong' then
+      elseif input:match('^/pong$') then
         -- tdbot.
-      elseif input == '^/pung' then
+      elseif input:match('^/pung$') then
         -- tdbot.
       elseif input:match('^tas ') then
         local text = input:sub(5, -1)
