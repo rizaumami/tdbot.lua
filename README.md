@@ -5,7 +5,7 @@ See [wiki](https://github.com/rizaumami/tdbot.lua/wiki) for documentation.
 
 ## How to Use
 
-- Put tdbot.lua on a same directory level with your bot script
+- Put `tdbot.lua` on a same directory level with your bot script
 - Import `tdbot.lua` into your bot.
 - Call the functions.
 
@@ -37,7 +37,7 @@ end
 
 ## The Functions
 
-`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170906-nightly.tl](https://valtman.name/files/telegram-bot-170906-nightly.tl) scheme.  
+`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170907-nightly.tl](https://valtman.name/files/telegram-bot-170907-nightly.tl) scheme.  
 Here is a list of `telegram-bot` methods. Checked functions has been tested and works or returned "ok".
 
 - [x] [getAuthState](https://github.com/rizaumami/tdbot.lua/wiki/getAuthState)
@@ -89,7 +89,7 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [searchSecretMessages](https://github.com/rizaumami/tdbot.lua/wiki/searchSecretMessages)
 - [x] [searchCallMessages](https://github.com/rizaumami/tdbot.lua/wiki/searchCallMessages)
 - [x] [getPublicMessageLink](https://github.com/rizaumami/tdbot.lua/wiki/getPublicMessageLink)
-- [ ] [sendMessage](https://github.com/rizaumami/tdbot.lua/wiki/sendMessage)
+- [x] [sendMessage](https://github.com/rizaumami/tdbot.lua/wiki/sendMessage)
 - [x] [sendBotStartMessage](https://github.com/rizaumami/tdbot.lua/wiki/sendBotStartMessage)
 - [ ] [sendInlineQueryResultMessage](https://github.com/rizaumami/tdbot.lua/wiki/sendInlineQueryResultMessage)
 - [x] [forwardMessages](https://github.com/rizaumami/tdbot.lua/wiki/forwardMessages)
@@ -224,10 +224,10 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [ ] [setPrivacy](https://github.com/rizaumami/tdbot.lua/wiki/setPrivacy)
 - [x] [getPrivacy](https://github.com/rizaumami/tdbot.lua/wiki/getPrivacy)
 - [x] [getOption](https://github.com/rizaumami/tdbot.lua/wiki/getOption)
-- [ ] [setOption](https://github.com/rizaumami/tdbot.lua/wiki/setOption)
+- [x] [setOption](https://github.com/rizaumami/tdbot.lua/wiki/setOption)
 - [x] [changeAccountTtl](https://github.com/rizaumami/tdbot.lua/wiki/changeAccountTtl)
 - [x] [getAccountTtl](https://github.com/rizaumami/tdbot.lua/wiki/getAccountTtl)
-- [ ] [deleteAccount](https://github.com/rizaumami/tdbot.lua/wiki/deleteAccount)
+- [x] [deleteAccount](https://github.com/rizaumami/tdbot.lua/wiki/deleteAccount)
 - [x] [getChatReportSpamState](https://github.com/rizaumami/tdbot.lua/wiki/getChatReportSpamState)
 - [ ] [changeChatReportSpamState](https://github.com/rizaumami/tdbot.lua/wiki/changeChatReportSpamState)
 - [x] [reportChat](https://github.com/rizaumami/tdbot.lua/wiki/reportChat)
@@ -263,3 +263,18 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [ ] [testGetDifference](https://github.com/rizaumami/tdbot.lua/wiki/testGetDifference)
 - [ ] [testUseUpdate](https://github.com/rizaumami/tdbot.lua/wiki/testUseUpdate)
 - [ ] [testUseError](https://github.com/rizaumami/tdbot.lua/wiki/testUseError)
+- [x] [sendText](https://github.com/rizaumami/tdbot.lua/wiki/sendText)
+- [x] [sendAnimation](https://github.com/rizaumami/tdbot.lua/wiki/sendAnimation)
+- [x] [sendAudio](https://github.com/rizaumami/tdbot.lua/wiki/sendAudio)
+- [x] [sendDocument](https://github.com/rizaumami/tdbot.lua/wiki/sendDocument)
+- [x] [sendPhoto](https://github.com/rizaumami/tdbot.lua/wiki/sendPhoto)
+- [x] [sendSticker](https://github.com/rizaumami/tdbot.lua/wiki/sendSticker)
+- [x] [sendVideo](https://github.com/rizaumami/tdbot.lua/wiki/sendVideo)
+- [x] [sendVideoNote](https://github.com/rizaumami/tdbot.lua/wiki/sendVideoNote)
+- [x] [sendVoice](https://github.com/rizaumami/tdbot.lua/wiki/sendVoice)
+- [x] [sendLocation](https://github.com/rizaumami/tdbot.lua/wiki/sendLocation)
+- [x] [sendVenue](https://github.com/rizaumami/tdbot.lua/wiki/sendVenue)
+- [x] [sendContact](https://github.com/rizaumami/tdbot.lua/wiki/sendContact)
+- [x] [sendGame](https://github.com/rizaumami/tdbot.lua/wiki/sendGame)
+- [ ] [sendInvoice](https://github.com/rizaumami/tdbot.lua/wiki/sendInvoice)
+- [x] [sendForwarded](https://github.com/rizaumami/tdbot.lua/wiki/sendForwarded
