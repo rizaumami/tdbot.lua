@@ -37,7 +37,7 @@ end
 
 ## The Functions
 
-`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170907-nightly.tl](https://valtman.name/files/telegram-bot-170907-nightly.tl) scheme.  
+`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170909-nightly.tl](https://valtman.name/files/telegram-bot-170909-nightly.tl) scheme.  
 Here is a list of `telegram-bot` methods. Checked functions has been tested and works or returned "ok".
 
 - [x] [getAuthState](https://github.com/rizaumami/tdbot.lua/wiki/getAuthState)
@@ -105,6 +105,7 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [ ] [editInlineMessageReplyMarkup](https://github.com/rizaumami/tdbot.lua/wiki/editInlineMessageReplyMarkup)
 - [x] [getTextEntities](https://github.com/rizaumami/tdbot.lua/wiki/getTextEntities)
 - [x] [getFileMimeType](https://github.com/rizaumami/tdbot.lua/wiki/getFileMimeType)
+- [ ] [getFileExtension](https://github.com/rizaumami/tdbot.lua/wiki/getFileExtension)
 - [x] [getInlineQueryResults](https://github.com/rizaumami/tdbot.lua/wiki/getInlineQueryResults)
 - [ ] [answerInlineQuery](https://github.com/rizaumami/tdbot.lua/wiki/answerInlineQuery)
 - [ ] [getCallbackQueryAnswer](https://github.com/rizaumami/tdbot.lua/wiki/getCallbackQueryAnswer)
@@ -246,7 +247,7 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [ ] [deleteStickerFromSet](https://github.com/rizaumami/tdbot.lua/wiki/deleteStickerFromSet)
 - [ ] [sendCustomRequest](https://github.com/rizaumami/tdbot.lua/wiki/sendCustomRequest)
 - [ ] [answerCustomQuery](https://github.com/rizaumami/tdbot.lua/wiki/answerCustomQuery)
-- [ ] [setAlarm](https://github.com/rizaumami/tdbot.lua/wiki/setAlarm)
+- [x] [setAlarm](https://github.com/rizaumami/tdbot.lua/wiki/setAlarm)
 - [x] [getInviteText](https://github.com/rizaumami/tdbot.lua/wiki/getInviteText)
 - [x] [getTermsOfService](https://github.com/rizaumami/tdbot.lua/wiki/getTermsOfService)
 - [ ] [setProxy](https://github.com/rizaumami/tdbot.lua/wiki/setProxy)
@@ -277,4 +278,4 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [sendContact](https://github.com/rizaumami/tdbot.lua/wiki/sendContact)
 - [x] [sendGame](https://github.com/rizaumami/tdbot.lua/wiki/sendGame)
 - [ ] [sendInvoice](https://github.com/rizaumami/tdbot.lua/wiki/sendInvoice)
-- [x] [sendForwarded](https://github.com/rizaumami/tdbot.lua/wiki/sendForwarded
+- [x] [sendForwarded](https://github.com/rizaumami/tdbot.lua/wiki/sendForwarded)

@@ -3,12 +3,12 @@
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
-  
+
   This program is distributed in the hope that it will be useful,
   but WITHOUT ANY WARRANTY; without even the implied warranty of
   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
   GNU General Public License for more details.
-  
+
   You should have received a copy of the GNU General Public License
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
@@ -939,6 +939,7 @@ function tdbot.getTextEntities(text, callback, data)
 end
 
 -- Returns file's mime type guessing only by its extension.
+-- Returns empty string on failure.
 -- Offline method.
 -- Can be called before authorization.
 -- Can be called synchronously
@@ -947,6 +948,19 @@ function tdbot.getFileMimeType(filename, callback, data)
   assert (tdbot_function ({
     _ = 'getFileMimeType',
     file_name = tostring(filename)
+  }, callback or dl_cb, data))
+end
+
+-- Returns file's extension guessing only by its mime type.
+-- Returns empty string on failure.
+-- Offline method.
+-- Can be called before authorization.
+-- Can be called synchronously
+-- @mime_type Mime type of the file
+function tdbot.getFileExtension(mimetype, callback, data)
+  assert (tdbot_function ({
+    _ = 'getFileExtension',
+    mime_type = tostring(mimetype)
   }, callback or dl_cb, data))
 end
 
@@ -1349,11 +1363,10 @@ end
 
 -- Adds new member to chat.
 -- Members can't be added to private or secret chats.
--- Member will not be added until chat state will be synchronized with the server.
--- Member will not be added if application is killed before it can send request to the server
+-- Member will not be added until chat state will be synchronized with the server
 -- @chat_id Chat identifier
 -- @user_id Identifier of the user to add
--- @forward_limit Number of previous messages from chat to forward to new member, ignored for channel chats
+-- @forward_limit Number of previous messages from chat to forward to new member, ignored for channel chats. Can't be greater than 300
 function tdbot.addChatMember(chatid, userid, forwardlimit, callback, data)
   assert (tdbot_function ({
     _ = 'addChatMember',
@@ -1366,8 +1379,8 @@ end
 -- Adds many new members to the chat.
 -- Currently, available only for channels.
 -- Can't be used to join the channel.
--- Member will not be added until chat state will be synchronized with the server.
--- Member will not be added if application is killed before it can send request to the server
+-- Members can't be added to broadcast channel if it has more than 200 members.
+-- Members will not be added until chat state will be synchronized with the server
 -- @chat_id Chat identifier
 -- @user_ids Identifiers of the users to add
 function tdbot.addChatMembers(chatid, userids, callback, data)
@@ -1380,8 +1393,7 @@ end
 
 -- Changes status of the chat member, need appropriate privileges.
 -- This function is currently not suitable for adding new members to the chat, use addChatMember instead.
--- Status will not be changed until chat state will be synchronized with the server.
--- Status will not be changed if application is killed before it can send request to the server
+-- Status will not be changed until chat state will be synchronized with the server
 -- @chat_id Chat identifier
 -- @user_id Identifier of the user to edit status
 -- @status New status of the member in the chat
@@ -1591,10 +1603,8 @@ function tdbot.checkChatInviteLink(invitelink, callback, data)
 end
 
 -- Imports chat invite link, adds current user to a chat if possible.
--- Member will not be added until chat state will be synchronized with the server.
--- Member will not be added if application is killed before it can send request to the server
--- @invite_link Invite link to import.
--- Should begin with 'https://t.me/joinchat/', 'https://telegram.me/joinchat/' or 'https://telegram.dog/joinchat/'
+-- Member will not be added until chat state will be synchronized with the server
+-- @invite_link Invite link to import. Should begin with "https://t.me/joinchat/", "https://telegram.me/joinchat/" or "https://telegram.dog/joinchat/"
 function tdbot.importChatInviteLink(invitelink, callback, data)
   assert (tdbot_function ({
     _ = 'importChatInviteLink',
@@ -2036,8 +2046,6 @@ function tdbot.resetAllNotificationSettings(callback, data)
 end
 
 -- Uploads new profile photo for logged in user.
--- Photo will not change until change will be synchronized with the server.
--- Photo will not be changed if application is killed before it can send request to the server.
 -- If something changes, updateUser will be sent
 -- @photo Profile photo to set. inputFileId and inputFilePersistentId may be unsupported
 function tdbot.setProfilePhoto(photo_path, callback, data)
@@ -2463,33 +2471,34 @@ end
 -- @rules New privacy rules
 -- privacyKey: UserStatus | ChatInvite | Call
 -- rule: AllowAll | AllowContacts | AllowUsers | DisallowAll | DisallowContacts | DisallowUsers
-function tdbot.setPrivacy(privacykey, rule, allowed_user_ids, disallowed_user_ids, callback, data)
-  local privacyrules = {[0] = {_ = 'privacyRule' .. rule}}
+function tdbot.setPrivacy(privacy_key, rule, allowed_user_ids, disallowed_user_ids, callback, data)
+  local privacy_rules = {[0] = {_ = 'privacyRule' .. rule}}
+  print(type(allowed_user_ids), allowed_user_ids, disallowed_user_ids)
 
   if allowed_user_ids then
-    privacyrules = {
+    privacy_rules = {
       {
         _ = 'privacyRule' .. rule
       },
       [0] = {
         _ = 'privacyRuleAllowUsers',
-        user_ids = allowed_user_ids -- vector
+        user_ids = allowed_user_ids
       },
     }
   end
   if disallowed_user_ids then
-    privacyrules = {
+    privacy_rules = {
       {
         _ = 'privacyRule' .. rule
       },
       [0] = {
         _ = 'privacyRuleDisallowUsers',
-        user_ids = disallowed_user_ids -- vector
+        user_ids = disallowed_user_ids
       },
     }
   end
   if allowed_user_ids and disallowed_user_ids then
-    privacyrules = {
+    privacy_rules = {
       {
         _ = 'privacyRule' .. rule
       },
@@ -2506,11 +2515,11 @@ function tdbot.setPrivacy(privacykey, rule, allowed_user_ids, disallowed_user_id
   assert (tdbot_function ({
     _ = 'setPrivacy',
     key = {
-      _ = 'privacyKey' .. privacykey
+      _ = 'privacyKey' .. privacy_key
     },
     rules = {
       _ = 'privacyRules',
-      rules = privacyrules, -- vector<PrivacyRule>
+      rules = privacy_rules, -- vector<PrivacyRule>
     },
   }, callback or dl_cb, data))
 end
