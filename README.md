@@ -37,11 +37,7 @@ end
 
 ## The Functions
 
-<<<<<<< HEAD
 `tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170918-nightly.tl](https://valtman.name/files/telegram-bot-170918-nightly.tl) scheme.  
-=======
-`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170909-nightly.tl](https://valtman.name/files/telegram-bot-170909-nightly.tl) scheme.  
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 Here is a list of `telegram-bot` methods. Checked functions has been tested and works or returned "ok".
 
 - [x] [getAuthState](https://github.com/rizaumami/tdbot.lua/wiki/getAuthState)

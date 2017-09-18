@@ -637,15 +637,12 @@ function tdbot.getTextEntities(text, callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Returns file's mime type guessing only by its extension.
 -- Returns empty string on failure.
 -- Offline method.
 -- Can be called before authorization.
 -- Can be called synchronously
 -- @file_name Name of the file or path to the file
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.getFileMimeType(filename, callback, data)
   assert (tdbot_function ({
     _ = 'getFileMimeType',
@@ -653,15 +650,12 @@ function tdbot.getFileMimeType(filename, callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Returns file's extension guessing only by its mime type.
 -- Returns empty string on failure.
 -- Offline method.
 -- Can be called before authorization.
 -- Can be called synchronously
 -- @mime_type Mime type of the file
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.getFileExtension(mimetype, callback, data)
   assert (tdbot_function ({
     _ = 'getFileExtension',
@@ -669,8 +663,6 @@ function tdbot.getFileExtension(mimetype, callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Sends inline query to a bot and returns its results.
 -- Returns error with code 502 if bot fails to answer the query before query timeout expires.
 -- Unavailable for bots
@@ -683,7 +675,6 @@ end
 -- location on Earth
 -- @latitude Latitude of location in degrees as defined by sender
 -- @longitude Longitude of location in degrees as defined by sender
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.getInlineQueryResults(botuserid, chatid, lat, lon, query, off, callback, data)
   assert (tdbot_function ({
     _ = 'getInlineQueryResults',
@@ -945,15 +936,12 @@ function tdbot.setChatClientData(chatid, clientdata, callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Adds new member to chat.
 -- Members can't be added to private or secret chats.
 -- Member will not be added until chat state will be synchronized with the server
 -- @chat_id Chat identifier
 -- @user_id Identifier of the user to add
 -- @forward_limit Number of previous messages from chat to forward to new member, ignored for channel chats. Can't be greater than 300
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.addChatMember(chatid, userid, forwardlimit, callback, data)
   assert (tdbot_function ({
     _ = 'addChatMember',
@@ -963,8 +951,6 @@ function tdbot.addChatMember(chatid, userid, forwardlimit, callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Adds many new members to the chat.
 -- Currently, available only for channels.
 -- Can't be used to join the channel.
@@ -972,7 +958,6 @@ end
 -- Members will not be added until chat state will be synchronized with the server
 -- @chat_id Chat identifier
 -- @user_ids Identifiers of the users to add
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.addChatMembers(chatid, userids, callback, data)
   assert (tdbot_function ({
     _ = 'addChatMembers',
@@ -981,8 +966,6 @@ function tdbot.addChatMembers(chatid, userids, callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Changes status of the chat member, need appropriate privileges.
 -- This function is currently not suitable for adding new members to the chat, use addChatMember instead.
 -- Status will not be changed until chat state will be synchronized with the server
@@ -990,7 +973,6 @@ end
 -- @user_id Identifier of the user to edit status
 -- @status New status of the member in the chat
 -- rank = Creator | Administrator | Member | Restricted | Left | Banned
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.changeChatMemberStatus(chatid, userid, rank, right, callback, data)
   local chat_member_status = {}
 
@@ -1125,12 +1107,9 @@ function tdbot.checkChatInviteLink(invitelink, callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Imports chat invite link, adds current user to a chat if possible.
 -- Member will not be added until chat state will be synchronized with the server
 -- @invite_link Invite link to import. Should begin with "https://t.me/joinchat/", "https://telegram.me/joinchat/" or "https://telegram.dog/joinchat/"
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.importChatInviteLink(invitelink, callback, data)
   assert (tdbot_function ({
     _ = 'importChatInviteLink',
@@ -1486,12 +1465,9 @@ function tdbot.resetAllNotificationSettings(callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Uploads new profile photo for logged in user.
 -- If something changes, updateUser will be sent
 -- @photo Profile photo to set. inputFileId and inputFilePersistentId may be unsupported
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.setProfilePhoto(photo_path, callback, data)
   assert (tdbot_function ({
     _ = 'setProfilePhoto',
@@ -1788,14 +1764,11 @@ function tdbot.registerDevice(devicetoken, tokn, callback, data)
   }, callback or dl_cb, data))
 end
 
-<<<<<<< HEAD
-=======
 -- Changes privacy settings
 -- @key Privacy key
 -- @rules New privacy rules
 -- privacyKey: UserStatus | ChatInvite | Call
 -- rule: AllowAll | AllowContacts | AllowUsers | DisallowAll | DisallowContacts | DisallowUsers
->>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 function tdbot.setPrivacy(privacy_key, rule, allowed_user_ids, disallowed_user_ids, callback, data)
   local privacy_rules = {[0] = {_ = 'privacyRule' .. rule}}
   print(type(allowed_user_ids), allowed_user_ids, disallowed_user_ids)
@@ -2040,7 +2013,7 @@ function tdbot.addStickerToSet(userid, name, pngsticker, mpoint, xshift, yshift,
     sticker = {
       _ = 'inputSticker',
       png_sticker = getInputFile(pngsticker),
-      emojis = tostring(emoji)
+      emojis = tostring(emoji),
       mask_position = {
         _ = 'maskPosition',
         point = mpoint,
@@ -2048,6 +2021,7 @@ function tdbot.addStickerToSet(userid, name, pngsticker, mpoint, xshift, yshift,
         y_shift = yshift,
         scale = mscale
       },
+    },
   }, callback or dl_cb, data))
 end
 

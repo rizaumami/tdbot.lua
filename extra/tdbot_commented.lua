@@ -2888,7 +2888,7 @@ function tdbot.addStickerToSet(userid, name, pngsticker, mpoint, xshift, yshift,
     sticker = {
       _ = 'inputSticker',
       png_sticker = getInputFile(pngsticker),
-      emojis = tostring(emoji)
+      emojis = tostring(emoji),
       mask_position = {
         _ = 'maskPosition',
         point = mpoint,
@@ -2896,13 +2896,9 @@ function tdbot.addStickerToSet(userid, name, pngsticker, mpoint, xshift, yshift,
         y_shift = yshift,
         scale = mscale
       },
+    },
   }, callback or dl_cb, data))
 end
-
-
-
-
-
 
 -- Bots only.
 -- Changes position of a sticker in the set it belongs to.
