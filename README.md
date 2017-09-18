@@ -37,7 +37,11 @@ end
 
 ## The Functions
 
+<<<<<<< HEAD
+`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170918-nightly.tl](https://valtman.name/files/telegram-bot-170918-nightly.tl) scheme.  
+=======
 `tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170909-nightly.tl](https://valtman.name/files/telegram-bot-170909-nightly.tl) scheme.  
+>>>>>>> 342dfd47f94de25297504dcb31c0be3001ecd8c1
 Here is a list of `telegram-bot` methods. Checked functions has been tested and works or returned "ok".
 
 - [x] [getAuthState](https://github.com/rizaumami/tdbot.lua/wiki/getAuthState)
@@ -162,6 +166,8 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [importContacts](https://github.com/rizaumami/tdbot.lua/wiki/importContacts)
 - [x] [searchContacts](https://github.com/rizaumami/tdbot.lua/wiki/searchContacts)
 - [x] [deleteContacts](https://github.com/rizaumami/tdbot.lua/wiki/deleteContacts)
+- [ ] [getImportedContactCount](https://github.com/rizaumami/tdbot.lua/wiki/getImportedContactCount)
+- [ ] [deleteImportedContacts](https://github.com/rizaumami/tdbot.lua/wiki/deleteImportedContacts)
 - [x] [getUserProfilePhotos](https://github.com/rizaumami/tdbot.lua/wiki/getUserProfilePhotos)
 - [x] [getStickers](https://github.com/rizaumami/tdbot.lua/wiki/getStickers)
 - [x] [getInstalledStickerSets](https://github.com/rizaumami/tdbot.lua/wiki/getInstalledStickerSets)
@@ -177,6 +183,9 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [addRecentSticker](https://github.com/rizaumami/tdbot.lua/wiki/addRecentSticker)
 - [x] [deleteRecentSticker](https://github.com/rizaumami/tdbot.lua/wiki/deleteRecentSticker)
 - [x] [clearRecentStickers](https://github.com/rizaumami/tdbot.lua/wiki/clearRecentStickers)
+- [ ] [getFavoriteStickers](https://github.com/rizaumami/tdbot.lua/wiki/getFavoriteStickers)
+- [ ] [addFavoriteSticker](https://github.com/rizaumami/tdbot.lua/wiki/addFavoriteSticker)
+- [ ] [deleteFavoriteSticker](https://github.com/rizaumami/tdbot.lua/wiki/deleteFavoriteSticker)
 - [x] [getStickerEmojis](https://github.com/rizaumami/tdbot.lua/wiki/getStickerEmojis)
 - [x] [getSavedAnimations](https://github.com/rizaumami/tdbot.lua/wiki/getSavedAnimations)
 - [x] [addSavedAnimation](https://github.com/rizaumami/tdbot.lua/wiki/addSavedAnimation)
@@ -202,6 +211,7 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [terminateAllOtherSessions](https://github.com/rizaumami/tdbot.lua/wiki/terminateAllOtherSessions)
 - [x] [toggleGroupAdministrators](https://github.com/rizaumami/tdbot.lua/wiki/toggleGroupAdministrators)
 - [x] [changeChannelUsername](https://github.com/rizaumami/tdbot.lua/wiki/changeChannelUsername)
+- [ ] [setChannelStickerSet](https://github.com/rizaumami/tdbot.lua/wiki/setChannelStickerSet)
 - [x] [toggleChannelInvites](https://github.com/rizaumami/tdbot.lua/wiki/toggleChannelInvites)
 - [x] [toggleChannelSignMessages](https://github.com/rizaumami/tdbot.lua/wiki/toggleChannelSignMessages)
 - [x] [changeChannelDescription](https://github.com/rizaumami/tdbot.lua/wiki/changeChannelDescription)
