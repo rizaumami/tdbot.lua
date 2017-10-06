@@ -15,10 +15,7 @@
   MA 02110-1301, USA.
 ]]--
 
--- At the time this wrapper is written, telegram-bot's vector is buggy
--- Currently, only this form works: {[0] = v1, [1] = v2, [2] = v3}
--- Or use getVector function
-
+-- Vector form: {[0] = v1, v2, v3}
 -- If false or true crashed your telegram-bot, try to change true to 1 and false to 0
 
 -- Main table
@@ -85,23 +82,6 @@ local function getParseMode(parse_mode)
   end
 
   return P
-end
-
--- (Temporary) workaround for currently buggy telegram-bot's vector
--- This will return lua array from strings:
--- - {one, two, three}
--- - {[0] = one, two, three}
--- - {[0] = one, [1] = two, [2] = three}
-local function getVector(str)
-  local v = ''
-  local i = 0
-
-  for k in string.gmatch(str, '(%d%d%d+)') do
-    v = v .. '[' .. i .. ']=' .. k .. ','
-    i = i+1
-  end
-
-  return load('return {' .. v .. '}')()
 end
 
 -- Returns current authorization state, offline request
@@ -399,7 +379,7 @@ function tdbot.getMessages(chatid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'getMessages',
     chat_id = chatid,
-    message_ids = getVector(messageids)
+    message_ids = messageids
   }, callback or dl_cb, data))
 end
 
@@ -752,7 +732,7 @@ function tdbot.forwardMessages(chatid, fromchatid, messageids, disablenotificati
     _ = 'forwardMessages',
     chat_id = chatid,
     from_chat_id = fromchatid,
-    message_ids = getVector(messageids),
+    message_ids = messageids,
     disable_notification = disablenotification,
     from_background = frombackground
   }, callback or dl_cb, data))
@@ -865,7 +845,7 @@ function tdbot.deleteMessages(chatid, messageids, revok, callback, data)
   assert (tdbot_function ({
     _ = 'deleteMessages',
     chat_id = chatid,
-    message_ids = getVector(messageids),
+    message_ids = messageids,
     revoke = revok
   }, callback or dl_cb, data))
 end
@@ -1191,7 +1171,7 @@ function tdbot.viewMessages(chatid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'viewMessages',
     chat_id = chatid,
-    message_ids = getVector(messageids)
+    message_ids = messageids
   }, callback or dl_cb, data))
 end
 
@@ -1249,7 +1229,7 @@ end
 function tdbot.createNewGroupChat(userids, chattitle, callback, data)
   assert (tdbot_function ({
     _ = 'createNewGroupChat',
-    user_ids = getVector(userids),
+    user_ids = userids,
     title = tostring(chattitle)
   }, callback or dl_cb, data))
 end
@@ -1387,7 +1367,7 @@ function tdbot.addChatMembers(chatid, userids, callback, data)
   assert (tdbot_function ({
     _ = 'addChatMembers',
     chat_id = chatid,
-    user_ids = getVector(userids),
+    user_ids = userids,
   }, callback or dl_cb, data))
 end
 
@@ -1491,7 +1471,7 @@ end
 function tdbot.setPinnedChats(chatids, callback, data)
   assert (tdbot_function ({
     _ = 'setPinnedChats',
-    chat_ids = getVector(chatids)
+    chat_ids = chatids
   }, callback or dl_cb, data))
 end
 
@@ -1761,7 +1741,7 @@ end
 function tdbot.deleteContacts(userids, callback, data)
   assert (tdbot_function ({
     _ = 'deleteContacts',
-    user_ids = getVector(userids),
+    user_ids = userids,
   }, callback or dl_cb, data))
 end
 
@@ -1880,7 +1860,7 @@ end
 function tdbot.viewTrendingStickerSets(stickersetids, callback, data)
   assert (tdbot_function ({
     _ = 'viewTrendingStickerSets',
-    sticker_set_ids = getVector(stickersetids)
+    sticker_set_ids = stickersetids
   }, callback or dl_cb, data))
 end
 
@@ -1891,7 +1871,7 @@ function tdbot.reorderInstalledStickerSets(ismasks, stickersetids, callback, dat
   assert (tdbot_function ({
     _ = 'reorderInstalledStickerSets',
     is_masks = ismasks,
-    sticker_set_ids = getVector(stickersetids)
+    sticker_set_ids = stickersetids
   }, callback or dl_cb, data))
 end
 
@@ -2234,7 +2214,7 @@ end
 function tdbot.setChannelStickerSet(channelid, stickersetid, callback, data)
   assert (tdbot_function ({
     _ = 'setChannelStickerSet',
-    channel_id = channelid,
+    channel_id = getChatId(channelid).id,
     sticker_set_id = stickersetid
   }, callback or dl_cb, data))
 end
@@ -2310,7 +2290,7 @@ function tdbot.reportChannelSpam(channelid, userid, messageids, callback, data)
     _ = 'reportChannelSpam',
     channel_id = getChatId(channelid).id,
     user_id = userid,
-    message_ids = getVector(messageids)
+    message_ids = messageids
   }, callback or dl_cb, data))
 end
 
@@ -2403,7 +2383,7 @@ function tdbot.getChatEventLog(chatid, searchquery, fromeventid, lim, userids, m
       info_changes = infochanges or 1,
       setting_changes = settingchanges or 1
     },
-    user_ids = getVector(userids)
+    user_ids = userids
   }, callback or dl_cb, data))
 end
 
@@ -2536,7 +2516,6 @@ end
 -- rule: AllowAll | AllowContacts | AllowUsers | DisallowAll | DisallowContacts | DisallowUsers
 function tdbot.setPrivacy(privacy_key, rule, allowed_user_ids, disallowed_user_ids, callback, data)
   local privacy_rules = {[0] = {_ = 'privacyRule' .. rule}}
-  print(type(allowed_user_ids), allowed_user_ids, disallowed_user_ids)
 
   if allowed_user_ids then
     privacy_rules = {
@@ -2736,8 +2715,8 @@ function tdbot.optimizeStorage(siz, tt, cnt, immunitydelay, filetypes, chatids, 
     file_types = {
       _ = 'fileType' .. filetypes
     },
-    chat_ids = getVector(chatids),
-    exclude_chat_ids = getVector(excludechatids),
+    chat_ids = chatids,
+    exclude_chat_ids = excludechatids,
     chat_limit = chatlimit
   }, callback or dl_cb, data))
 end
@@ -3086,7 +3065,7 @@ function tdbot.sendPhoto(chat_id, reply_to_message_id, photo_file, photo_thumb, 
     _ = 'inputMessagePhoto',
     photo = getInputFile(photo_file),
     thumb = photo_thumb, -- inputThumb
-    added_sticker_file_ids = getVector(addedstickerfileids),
+    added_sticker_file_ids = addedstickerfileids,
     width = photo_width,
     height = photo_height,
     caption = tostring(photo_caption),
@@ -3124,7 +3103,7 @@ function tdbot.sendVideo(chat_id, reply_to_message_id, video_file, vid_thumb, ad
     _ = 'inputMessageVideo',
     video = getInputFile(video_file),
     thumb = vid_thumb, -- inputThumb
-    added_sticker_file_ids = getVector(addedstickerfileids),
+    added_sticker_file_ids = addedstickerfileids,
     duration = vid_duration or 0,
     width = vid_width or 0,
     height = vid_height or 0,

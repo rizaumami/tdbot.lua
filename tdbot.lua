@@ -15,12 +15,6 @@
   MA 02110-1301, USA.
 ]]--
 
--- At the time this wrapper is written, telegram-bot's vector is buggy
--- Currently, only this form works: {[0] = v1, [1] = v2, [2] = v3}
--- Or use getVector function
-
--- If false or true crashed your telegram-bot, try to change true to 1 and false to 0
-
 local tdbot = {}
 
 function dl_cb(arg, data)
@@ -78,18 +72,6 @@ local function getParseMode(parse_mode)
   end
 
   return P
-end
-
-local function getVector(str)
-  local v = ''
-  local i = 0
-
-  for k in string.gmatch(str, '(%d%d%d+)') do
-    v = v .. '[' .. i .. ']=' .. k .. ','
-    i = i+1
-  end
-
-  return load('return {' .. v .. '}')()
 end
 
 function tdbot.getAuthState(callback, data)
@@ -297,7 +279,7 @@ function tdbot.getMessages(chatid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'getMessages',
     chat_id = chatid,
-    message_ids = getVector(messageids)
+    message_ids = messageids
   }, callback or dl_cb, data))
 end
 
@@ -517,7 +499,7 @@ function tdbot.forwardMessages(chatid, fromchatid, messageids, disablenotificati
     _ = 'forwardMessages',
     chat_id = chatid,
     from_chat_id = fromchatid,
-    message_ids = getVector(messageids),
+    message_ids = messageids,
     disable_notification = disablenotification,
     from_background = frombackground
   }, callback or dl_cb, data))
@@ -590,7 +572,7 @@ function tdbot.deleteMessages(chatid, messageids, revok, callback, data)
   assert (tdbot_function ({
     _ = 'deleteMessages',
     chat_id = chatid,
-    message_ids = getVector(messageids),
+    message_ids = messageids,
     revoke = revok
   }, callback or dl_cb, data))
 end
@@ -637,12 +619,6 @@ function tdbot.getTextEntities(text, callback, data)
   }, callback or dl_cb, data))
 end
 
--- Returns file's mime type guessing only by its extension.
--- Returns empty string on failure.
--- Offline method.
--- Can be called before authorization.
--- Can be called synchronously
--- @file_name Name of the file or path to the file
 function tdbot.getFileMimeType(filename, callback, data)
   assert (tdbot_function ({
     _ = 'getFileMimeType',
@@ -650,12 +626,6 @@ function tdbot.getFileMimeType(filename, callback, data)
   }, callback or dl_cb, data))
 end
 
--- Returns file's extension guessing only by its mime type.
--- Returns empty string on failure.
--- Offline method.
--- Can be called before authorization.
--- Can be called synchronously
--- @mime_type Mime type of the file
 function tdbot.getFileExtension(mimetype, callback, data)
   assert (tdbot_function ({
     _ = 'getFileExtension',
@@ -663,18 +633,6 @@ function tdbot.getFileExtension(mimetype, callback, data)
   }, callback or dl_cb, data))
 end
 
--- Sends inline query to a bot and returns its results.
--- Returns error with code 502 if bot fails to answer the query before query timeout expires.
--- Unavailable for bots
--- @bot_user_id Identifier of the bot send query to
--- @chat_id Identifier of the chat, where the query is sent
--- @user_location User location, only if needed
--- @query Text of the query
--- @offset Offset of the first entry to return
----
--- location on Earth
--- @latitude Latitude of location in degrees as defined by sender
--- @longitude Longitude of location in degrees as defined by sender
 function tdbot.getInlineQueryResults(botuserid, chatid, lat, lon, query, off, callback, data)
   assert (tdbot_function ({
     _ = 'getInlineQueryResults',
@@ -814,7 +772,7 @@ function tdbot.viewMessages(chatid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'viewMessages',
     chat_id = chatid,
-    message_ids = getVector(messageids)
+    message_ids = messageids
   }, callback or dl_cb, data))
 end
 
@@ -857,7 +815,7 @@ end
 function tdbot.createNewGroupChat(userids, chattitle, callback, data)
   assert (tdbot_function ({
     _ = 'createNewGroupChat',
-    user_ids = getVector(userids),
+    user_ids = userids,
     title = tostring(chattitle)
   }, callback or dl_cb, data))
 end
@@ -936,12 +894,6 @@ function tdbot.setChatClientData(chatid, clientdata, callback, data)
   }, callback or dl_cb, data))
 end
 
--- Adds new member to chat.
--- Members can't be added to private or secret chats.
--- Member will not be added until chat state will be synchronized with the server
--- @chat_id Chat identifier
--- @user_id Identifier of the user to add
--- @forward_limit Number of previous messages from chat to forward to new member, ignored for channel chats. Can't be greater than 300
 function tdbot.addChatMember(chatid, userid, forwardlimit, callback, data)
   assert (tdbot_function ({
     _ = 'addChatMember',
@@ -951,28 +903,14 @@ function tdbot.addChatMember(chatid, userid, forwardlimit, callback, data)
   }, callback or dl_cb, data))
 end
 
--- Adds many new members to the chat.
--- Currently, available only for channels.
--- Can't be used to join the channel.
--- Members can't be added to broadcast channel if it has more than 200 members.
--- Members will not be added until chat state will be synchronized with the server
--- @chat_id Chat identifier
--- @user_ids Identifiers of the users to add
 function tdbot.addChatMembers(chatid, userids, callback, data)
   assert (tdbot_function ({
     _ = 'addChatMembers',
     chat_id = chatid,
-    user_ids = getVector(userids),
+    user_ids = userids,
   }, callback or dl_cb, data))
 end
 
--- Changes status of the chat member, need appropriate privileges.
--- This function is currently not suitable for adding new members to the chat, use addChatMember instead.
--- Status will not be changed until chat state will be synchronized with the server
--- @chat_id Chat identifier
--- @user_id Identifier of the user to edit status
--- @status New status of the member in the chat
--- rank = Creator | Administrator | Member | Restricted | Left | Banned
 function tdbot.changeChatMemberStatus(chatid, userid, rank, right, callback, data)
   local chat_member_status = {}
 
@@ -1033,7 +971,7 @@ end
 function tdbot.setPinnedChats(chatids, callback, data)
   assert (tdbot_function ({
     _ = 'setPinnedChats',
-    chat_ids = getVector(chatids)
+    chat_ids = chatids
   }, callback or dl_cb, data))
 end
 
@@ -1107,9 +1045,6 @@ function tdbot.checkChatInviteLink(invitelink, callback, data)
   }, callback or dl_cb, data))
 end
 
--- Imports chat invite link, adds current user to a chat if possible.
--- Member will not be added until chat state will be synchronized with the server
--- @invite_link Invite link to import. Should begin with "https://t.me/joinchat/", "https://telegram.me/joinchat/" or "https://telegram.dog/joinchat/"
 function tdbot.importChatInviteLink(invitelink, callback, data)
   assert (tdbot_function ({
     _ = 'importChatInviteLink',
@@ -1220,7 +1155,7 @@ end
 function tdbot.deleteContacts(userids, callback, data)
   assert (tdbot_function ({
     _ = 'deleteContacts',
-    user_ids = getVector(userids),
+    user_ids = userids,
   }, callback or dl_cb, data))
 end
 
@@ -1308,7 +1243,7 @@ end
 function tdbot.viewTrendingStickerSets(stickersetids, callback, data)
   assert (tdbot_function ({
     _ = 'viewTrendingStickerSets',
-    sticker_set_ids = getVector(stickersetids)
+    sticker_set_ids = stickersetids
   }, callback or dl_cb, data))
 end
 
@@ -1316,7 +1251,7 @@ function tdbot.reorderInstalledStickerSets(ismasks, stickersetids, callback, dat
   assert (tdbot_function ({
     _ = 'reorderInstalledStickerSets',
     is_masks = ismasks,
-    sticker_set_ids = getVector(stickersetids)
+    sticker_set_ids = stickersetids
   }, callback or dl_cb, data))
 end
 
@@ -1465,9 +1400,6 @@ function tdbot.resetAllNotificationSettings(callback, data)
   }, callback or dl_cb, data))
 end
 
--- Uploads new profile photo for logged in user.
--- If something changes, updateUser will be sent
--- @photo Profile photo to set. inputFileId and inputFilePersistentId may be unsupported
 function tdbot.setProfilePhoto(photo_path, callback, data)
   assert (tdbot_function ({
     _ = 'setProfilePhoto',
@@ -1564,7 +1496,7 @@ end
 function tdbot.setChannelStickerSet(channelid, stickersetid, callback, data)
   assert (tdbot_function ({
     _ = 'setChannelStickerSet',
-    channel_id = channelid,
+    channel_id = getChatId(channelid).id,
     sticker_set_id = stickersetid
   }, callback or dl_cb, data))
 end
@@ -1614,7 +1546,7 @@ function tdbot.reportChannelSpam(channelid, userid, messageids, callback, data)
     _ = 'reportChannelSpam',
     channel_id = getChatId(channelid).id,
     user_id = userid,
-    message_ids = getVector(messageids)
+    message_ids = messageids
   }, callback or dl_cb, data))
 end
 
@@ -1668,7 +1600,7 @@ function tdbot.getChatEventLog(chatid, searchquery, fromeventid, lim, userids, m
       info_changes = infochanges or 1,
       setting_changes = settingchanges or 1
     },
-    user_ids = getVector(userids)
+    user_ids = userids
   }, callback or dl_cb, data))
 end
 
@@ -1764,14 +1696,8 @@ function tdbot.registerDevice(devicetoken, tokn, callback, data)
   }, callback or dl_cb, data))
 end
 
--- Changes privacy settings
--- @key Privacy key
--- @rules New privacy rules
--- privacyKey: UserStatus | ChatInvite | Call
--- rule: AllowAll | AllowContacts | AllowUsers | DisallowAll | DisallowContacts | DisallowUsers
 function tdbot.setPrivacy(privacy_key, rule, allowed_user_ids, disallowed_user_ids, callback, data)
   local privacy_rules = {[0] = {_ = 'privacyRule' .. rule}}
-  print(type(allowed_user_ids), allowed_user_ids, disallowed_user_ids)
 
   if allowed_user_ids then
     privacy_rules = {
@@ -1921,8 +1847,8 @@ function tdbot.optimizeStorage(siz, tt, cnt, immunitydelay, filetypes, chatids, 
     file_types = {
       _ = 'fileType' .. filetypes
     },
-    chat_ids = getVector(chatids),
-    exclude_chat_ids = getVector(excludechatids),
+    chat_ids = chatids,
+    exclude_chat_ids = excludechatids,
     chat_limit = chatlimit
   }, callback or dl_cb, data))
 end
@@ -2146,7 +2072,7 @@ function tdbot.sendPhoto(chat_id, reply_to_message_id, photo_file, photo_thumb, 
     _ = 'inputMessagePhoto',
     photo = getInputFile(photo_file),
     thumb = photo_thumb, -- inputThumb
-    added_sticker_file_ids = getVector(addedstickerfileids),
+    added_sticker_file_ids = addedstickerfileids,
     width = photo_width,
     height = photo_height,
     caption = tostring(photo_caption),
@@ -2171,7 +2097,7 @@ function tdbot.sendVideo(chat_id, reply_to_message_id, video_file, vid_thumb, ad
     _ = 'inputMessageVideo',
     video = getInputFile(video_file),
     thumb = vid_thumb, -- inputThumb
-    added_sticker_file_ids = getVector(addedstickerfileids),
+    added_sticker_file_ids = addedstickerfileids,
     duration = vid_duration or 0,
     width = vid_width or 0,
     height = vid_height or 0,

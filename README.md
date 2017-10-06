@@ -37,7 +37,7 @@ end
 
 ## The Functions
 
-`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-170918-nightly.tl](https://valtman.name/files/telegram-bot-170918-nightly.tl) scheme.  
+`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-171006-nightly.tl](https://valtman.name/files/telegram-bot-171006-nightly.tl) scheme.  
 Here is a list of `telegram-bot` methods. Checked functions has been tested and works or returned "ok".
 
 - [x] [getAuthState](https://github.com/rizaumami/tdbot.lua/wiki/getAuthState)
@@ -74,7 +74,7 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [getChats](https://github.com/rizaumami/tdbot.lua/wiki/getChats)
 - [x] [searchPublicChat](https://github.com/rizaumami/tdbot.lua/wiki/searchPublicChat)
 - [x] [searchPublicChats](https://github.com/rizaumami/tdbot.lua/wiki/searchPublicChats)
-- [ ] [searchChats](https://github.com/rizaumami/tdbot.lua/wiki/searchChats)
+- [x] [searchChats](https://github.com/rizaumami/tdbot.lua/wiki/searchChats)
 - [x] [getTopChats](https://github.com/rizaumami/tdbot.lua/wiki/getTopChats)
 - [x] [deleteTopChat](https://github.com/rizaumami/tdbot.lua/wiki/deleteTopChat)
 - [x] [addRecentlyFoundChat](https://github.com/rizaumami/tdbot.lua/wiki/addRecentlyFoundChat)
@@ -105,7 +105,7 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [ ] [editInlineMessageReplyMarkup](https://github.com/rizaumami/tdbot.lua/wiki/editInlineMessageReplyMarkup)
 - [x] [getTextEntities](https://github.com/rizaumami/tdbot.lua/wiki/getTextEntities)
 - [x] [getFileMimeType](https://github.com/rizaumami/tdbot.lua/wiki/getFileMimeType)
-- [ ] [getFileExtension](https://github.com/rizaumami/tdbot.lua/wiki/getFileExtension)
+- [x] [getFileExtension](https://github.com/rizaumami/tdbot.lua/wiki/getFileExtension)
 - [x] [getInlineQueryResults](https://github.com/rizaumami/tdbot.lua/wiki/getInlineQueryResults)
 - [ ] [answerInlineQuery](https://github.com/rizaumami/tdbot.lua/wiki/answerInlineQuery)
 - [ ] [getCallbackQueryAnswer](https://github.com/rizaumami/tdbot.lua/wiki/getCallbackQueryAnswer)
@@ -179,9 +179,9 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [addRecentSticker](https://github.com/rizaumami/tdbot.lua/wiki/addRecentSticker)
 - [x] [deleteRecentSticker](https://github.com/rizaumami/tdbot.lua/wiki/deleteRecentSticker)
 - [x] [clearRecentStickers](https://github.com/rizaumami/tdbot.lua/wiki/clearRecentStickers)
-- [ ] [getFavoriteStickers](https://github.com/rizaumami/tdbot.lua/wiki/getFavoriteStickers)
-- [ ] [addFavoriteSticker](https://github.com/rizaumami/tdbot.lua/wiki/addFavoriteSticker)
-- [ ] [deleteFavoriteSticker](https://github.com/rizaumami/tdbot.lua/wiki/deleteFavoriteSticker)
+- [x] [getFavoriteStickers](https://github.com/rizaumami/tdbot.lua/wiki/getFavoriteStickers)
+- [x] [addFavoriteSticker](https://github.com/rizaumami/tdbot.lua/wiki/addFavoriteSticker)
+- [x] [deleteFavoriteSticker](https://github.com/rizaumami/tdbot.lua/wiki/deleteFavoriteSticker)
 - [x] [getStickerEmojis](https://github.com/rizaumami/tdbot.lua/wiki/getStickerEmojis)
 - [x] [getSavedAnimations](https://github.com/rizaumami/tdbot.lua/wiki/getSavedAnimations)
 - [x] [addSavedAnimation](https://github.com/rizaumami/tdbot.lua/wiki/addSavedAnimation)
@@ -207,7 +207,7 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [terminateAllOtherSessions](https://github.com/rizaumami/tdbot.lua/wiki/terminateAllOtherSessions)
 - [x] [toggleGroupAdministrators](https://github.com/rizaumami/tdbot.lua/wiki/toggleGroupAdministrators)
 - [x] [changeChannelUsername](https://github.com/rizaumami/tdbot.lua/wiki/changeChannelUsername)
-- [ ] [setChannelStickerSet](https://github.com/rizaumami/tdbot.lua/wiki/setChannelStickerSet)
+- [x] [setChannelStickerSet](https://github.com/rizaumami/tdbot.lua/wiki/setChannelStickerSet)
 - [x] [toggleChannelInvites](https://github.com/rizaumami/tdbot.lua/wiki/toggleChannelInvites)
 - [x] [toggleChannelSignMessages](https://github.com/rizaumami/tdbot.lua/wiki/toggleChannelSignMessages)
 - [x] [changeChannelDescription](https://github.com/rizaumami/tdbot.lua/wiki/changeChannelDescription)
