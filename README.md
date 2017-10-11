@@ -37,7 +37,7 @@ end
 
 ## The Functions
 
-`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-171006-nightly.tl](https://valtman.name/files/telegram-bot-171006-nightly.tl) scheme.  
+`tdbot.lua` is a _Work In Progress_. This commit is based on [telegram-bot-171011-nightly.tl](https://valtman.name/files/telegram-bot-171011-nightly.tl) scheme.  
 Here is a list of `telegram-bot` methods. Checked functions has been tested and works or returned "ok".
 
 - [x] [getAuthState](https://github.com/rizaumami/tdbot.lua/wiki/getAuthState)
@@ -173,8 +173,8 @@ Here is a list of `telegram-bot` methods. Checked functions has been tested and 
 - [x] [getStickerSet](https://github.com/rizaumami/tdbot.lua/wiki/getStickerSet)
 - [x] [searchStickerSet](https://github.com/rizaumami/tdbot.lua/wiki/searchStickerSet)
 - [x] [changeStickerSet](https://github.com/rizaumami/tdbot.lua/wiki/changeStickerSet)
-- [ ] [viewTrendingStickerSets](https://github.com/rizaumami/tdbot.lua/wiki/viewTrendingStickerSets)
-- [ ] [reorderInstalledStickerSets](https://github.com/rizaumami/tdbot.lua/wiki/reorderInstalledStickerSets)
+- [x] [viewTrendingStickerSets](https://github.com/rizaumami/tdbot.lua/wiki/viewTrendingStickerSets)
+- [x] [reorderInstalledStickerSets](https://github.com/rizaumami/tdbot.lua/wiki/reorderInstalledStickerSets)
 - [x] [getRecentStickers](https://github.com/rizaumami/tdbot.lua/wiki/getRecentStickers)
 - [x] [addRecentSticker](https://github.com/rizaumami/tdbot.lua/wiki/addRecentSticker)
 - [x] [deleteRecentSticker](https://github.com/rizaumami/tdbot.lua/wiki/deleteRecentSticker)

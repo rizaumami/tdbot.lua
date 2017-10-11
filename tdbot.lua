@@ -74,6 +74,18 @@ local function getParseMode(parse_mode)
   return P
 end
 
+local function getVector(str)
+  local v = {}
+  local i = 1
+
+  for k in string.gmatch(str, '(%d%d%d+)') do
+    v[i] = '[' .. i-1 .. ']="' .. k .. '"'
+    i = i+1
+  end
+  v = table.concat(v, ',')
+  return load('return {' .. v .. '}')()
+end
+
 function tdbot.getAuthState(callback, data)
   assert (tdbot_function ({
     _ = 'getAuthState'
@@ -279,7 +291,7 @@ function tdbot.getMessages(chatid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'getMessages',
     chat_id = chatid,
-    message_ids = messageids
+    message_ids = getVector(messageids)
   }, callback or dl_cb, data))
 end
 
@@ -499,7 +511,7 @@ function tdbot.forwardMessages(chatid, fromchatid, messageids, disablenotificati
     _ = 'forwardMessages',
     chat_id = chatid,
     from_chat_id = fromchatid,
-    message_ids = messageids,
+    message_ids = getVector(messageids),
     disable_notification = disablenotification,
     from_background = frombackground
   }, callback or dl_cb, data))
@@ -553,7 +565,7 @@ function tdbot.answerInlineQuery(inlinequeryid, ispersonal, results, cachetime, 
     _ = 'answerInlineQuery',
     inline_query_id = inlinequeryid,
     is_personal = ispersonal,
-    results = results, -- vector<InputInlineQueryResult>
+    results = results,
     cache_time = cachetime,
     next_offset = tostring(nextoffset),
     switch_pm_text = tostring(switchpmtext),
@@ -572,7 +584,7 @@ function tdbot.deleteMessages(chatid, messageids, revok, callback, data)
   assert (tdbot_function ({
     _ = 'deleteMessages',
     chat_id = chatid,
-    message_ids = messageids,
+    message_ids = getVector(messageids),
     revoke = revok
   }, callback or dl_cb, data))
 end
@@ -596,7 +608,7 @@ function tdbot.editMessageText(chatid, messageid, replymarkup, teks, disablewebp
       text = tostring(teks),
       disable_web_page_preview = disablewebpagepreview,
       clear_draft = cleardraft,
-      entities = entity, -- vector<textEntity>
+      entities = entity,
       parse_mode = getParseMode(textparsemode)
     },
   }, callback or dl_cb, data))
@@ -682,7 +694,7 @@ function tdbot.answerShippingQuery(shippingqueryid, shippingoptions, errormessag
   assert (tdbot_function ({
     _ = 'answerShippingQuery',
     shipping_query_id = shippingqueryid,
-    shipping_options = shippingoptions, -- vector<shippingOption>
+    shipping_options = shippingoptions,
     error_message = tostring(errormessage)
   }, callback or dl_cb, data))
 end
@@ -772,7 +784,7 @@ function tdbot.viewMessages(chatid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'viewMessages',
     chat_id = chatid,
-    message_ids = messageids
+    message_ids = getVector(messageids)
   }, callback or dl_cb, data))
 end
 
@@ -815,7 +827,7 @@ end
 function tdbot.createNewGroupChat(userids, chattitle, callback, data)
   assert (tdbot_function ({
     _ = 'createNewGroupChat',
-    user_ids = userids,
+    user_ids = getVector(userids),
     title = tostring(chattitle)
   }, callback or dl_cb, data))
 end
@@ -871,7 +883,7 @@ function tdbot.changeChatDraftMessage(chatid, replytomessageid, teks, disableweb
         text = tostring(teks),
         disable_web_page_preview = disablewebpagepreview,
         clear_draft = cleardraft,
-        entities = entity, -- vector<textEntity>
+        entities = entity,
         parse_mode = getParseMode(parsemode)
       },
     },
@@ -907,7 +919,7 @@ function tdbot.addChatMembers(chatid, userids, callback, data)
   assert (tdbot_function ({
     _ = 'addChatMembers',
     chat_id = chatid,
-    user_ids = userids,
+    user_ids = getVector(userids),
   }, callback or dl_cb, data))
 end
 
@@ -971,7 +983,7 @@ end
 function tdbot.setPinnedChats(chatids, callback, data)
   assert (tdbot_function ({
     _ = 'setPinnedChats',
-    chat_ids = chatids
+    chat_ids = getVector(chatids)
   }, callback or dl_cb, data))
 end
 
@@ -1155,7 +1167,7 @@ end
 function tdbot.deleteContacts(userids, callback, data)
   assert (tdbot_function ({
     _ = 'deleteContacts',
-    user_ids = userids,
+    user_ids = getVector(userids),
   }, callback or dl_cb, data))
 end
 
@@ -1243,7 +1255,7 @@ end
 function tdbot.viewTrendingStickerSets(stickersetids, callback, data)
   assert (tdbot_function ({
     _ = 'viewTrendingStickerSets',
-    sticker_set_ids = stickersetids
+    sticker_set_ids = getVector(stickersetids)
   }, callback or dl_cb, data))
 end
 
@@ -1251,7 +1263,7 @@ function tdbot.reorderInstalledStickerSets(ismasks, stickersetids, callback, dat
   assert (tdbot_function ({
     _ = 'reorderInstalledStickerSets',
     is_masks = ismasks,
-    sticker_set_ids = stickersetids
+    sticker_set_ids = getVector(stickersetids)
   }, callback or dl_cb, data))
 end
 
@@ -1546,7 +1558,7 @@ function tdbot.reportChannelSpam(channelid, userid, messageids, callback, data)
     _ = 'reportChannelSpam',
     channel_id = getChatId(channelid).id,
     user_id = userid,
-    message_ids = messageids
+    message_ids = getVector(messageids)
   }, callback or dl_cb, data))
 end
 
@@ -1600,7 +1612,7 @@ function tdbot.getChatEventLog(chatid, searchquery, fromeventid, lim, userids, m
       info_changes = infochanges or 1,
       setting_changes = settingchanges or 1
     },
-    user_ids = userids
+    user_ids = getVector(userids)
   }, callback or dl_cb, data))
 end
 
@@ -1743,7 +1755,7 @@ function tdbot.setPrivacy(privacy_key, rule, allowed_user_ids, disallowed_user_i
     },
     rules = {
       _ = 'privacyRules',
-      rules = privacy_rules, -- vector<PrivacyRule>
+      rules = privacy_rules,
     },
   }, callback or dl_cb, data))
 end
@@ -1847,8 +1859,8 @@ function tdbot.optimizeStorage(siz, tt, cnt, immunitydelay, filetypes, chatids, 
     file_types = {
       _ = 'fileType' .. filetypes
     },
-    chat_ids = chatids,
-    exclude_chat_ids = excludechatids,
+    chat_ids = getVector(chatids),
+    exclude_chat_ids = getVector(excludechatids),
     chat_limit = chatlimit
   }, callback or dl_cb, data))
 end
@@ -2072,7 +2084,7 @@ function tdbot.sendPhoto(chat_id, reply_to_message_id, photo_file, photo_thumb, 
     _ = 'inputMessagePhoto',
     photo = getInputFile(photo_file),
     thumb = photo_thumb, -- inputThumb
-    added_sticker_file_ids = addedstickerfileids,
+    added_sticker_file_ids = getVector(addedstickerfileids),
     width = photo_width,
     height = photo_height,
     caption = tostring(photo_caption),
@@ -2097,7 +2109,7 @@ function tdbot.sendVideo(chat_id, reply_to_message_id, video_file, vid_thumb, ad
     _ = 'inputMessageVideo',
     video = getInputFile(video_file),
     thumb = vid_thumb, -- inputThumb
-    added_sticker_file_ids = addedstickerfileids,
+    added_sticker_file_ids = getVector(addedstickerfileids),
     duration = vid_duration or 0,
     width = vid_width or 0,
     height = vid_height or 0,

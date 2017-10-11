@@ -84,6 +84,23 @@ local function getParseMode(parse_mode)
   return P
 end
 
+--- (Temporary) workaround for currently buggy telegram-bot's vector
+--- This will return lua array from strings:
+--- - {one, two, three}
+--- - {[0] = one, two, three}
+--- - {[0] = one, [1] = two, [2] = three}
+local function getVector(str)
+  local v = {}
+  local i = 1
+
+  for k in string.gmatch(str, '(%d%d%d+)') do
+    v[i] = '[' .. i-1 .. ']="' .. k .. '"'
+    i = i+1
+  end
+  v = table.concat(v, ',')
+  return load('return {' .. v .. '}')()
+end
+
 -- Returns current authorization state, offline request
 function tdbot.getAuthState(callback, data)
   assert (tdbot_function ({
@@ -374,12 +391,12 @@ end
 -- Returns information about messages.
 -- If message is not found, returns null on the corresponding position of the result
 -- @chat_id Identifier of the chat, messages belongs to
--- @message_ids Identifiers of the messages to get
+-- @message_ids Identifiers of the messages to get -- vector<int53>
 function tdbot.getMessages(chatid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'getMessages',
     chat_id = chatid,
-    message_ids = messageids
+    message_ids = getVector(messageids)
   }, callback or dl_cb, data))
 end
 
@@ -724,7 +741,7 @@ end
 -- If message can't be forwarded, null will be returned instead of the message
 -- @chat_id Identifier of a chat to forward messages
 -- @from_chat_id Identifier of a chat to forward from
--- @message_ids Identifiers of messages to forward
+-- @message_ids Identifiers of messages to forward -- vector<int53>
 -- @disable_notification Pass true, to disable notification about the message, doesn't works if messages are forwarded to secret chat
 -- @from_background Pass true, if the message is sent from background
 function tdbot.forwardMessages(chatid, fromchatid, messageids, disablenotification, frombackground, callback, data)
@@ -732,7 +749,7 @@ function tdbot.forwardMessages(chatid, fromchatid, messageids, disablenotificati
     _ = 'forwardMessages',
     chat_id = chatid,
     from_chat_id = fromchatid,
-    message_ids = messageids,
+    message_ids = getVector(messageids),
     disable_notification = disablenotification,
     from_background = frombackground
   }, callback or dl_cb, data))
@@ -808,7 +825,7 @@ end
 -- Sets result of an inline query
 -- @inline_query_id Identifier of the inline query
 -- @is_personal Does result of the query can be cached only for specified user
--- @results Results of the query
+-- @results Results of the query -- vector<InputInlineQueryResult>
 -- @cache_time Allowed time to cache results of the query in seconds
 -- @next_offset Offset for the next inline query, pass empty string if there is no more results
 -- @switch_pm_text If non-empty, this text should be shown on the button, which opens private chat with the bot and sends bot start message with parameter switch_pm_parameter
@@ -838,14 +855,14 @@ end
 
 -- Deletes messages
 -- @chat_id Chat identifier
--- @message_ids Identifiers of messages to delete
+-- @message_ids Identifiers of messages to delete -- vector<int53>
 -- @revoke Pass true to try to delete sent messages for all chat members (may fail if messages are too old).
 -- Is always true for Channels and SecretChats
 function tdbot.deleteMessages(chatid, messageids, revok, callback, data)
   assert (tdbot_function ({
     _ = 'deleteMessages',
     chat_id = chatid,
-    message_ids = messageids,
+    message_ids = getVector(messageids),
     revoke = revok
   }, callback or dl_cb, data))
 end
@@ -1021,13 +1038,13 @@ end
 -- Bots only.
 -- Sets result of a shipping query
 -- @shipping_query_id Identifier of the shipping query
--- @shipping_options Available shipping options
+-- @shipping_options Available shipping options -- vector<shippingOption>
 -- @error_message Error message, empty on success
 function tdbot.answerShippingQuery(shippingqueryid, shippingoptions, errormessage, callback, data)
   assert (tdbot_function ({
     _ = 'answerShippingQuery',
     shipping_query_id = shippingqueryid,
-    shipping_options = shippingoptions, -- vector<shippingOption>
+    shipping_options = shippingoptions,
     error_message = tostring(errormessage)
   }, callback or dl_cb, data))
 end
@@ -1166,12 +1183,12 @@ end
 -- Many useful activities depends on message being viewed.
 -- For example, marking messages as read, incrementing of view counter, updating of view counter, removing of deleted messages in channels
 -- @chat_id Chat identifier
--- @message_ids Identifiers of viewed messages
+-- @message_ids Identifiers of viewed messages -- vector<int53>
 function tdbot.viewMessages(chatid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'viewMessages',
     chat_id = chatid,
-    message_ids = messageids
+    message_ids = getVector(messageids)
   }, callback or dl_cb, data))
 end
 
@@ -1224,12 +1241,12 @@ function tdbot.createSecretChat(secretchatid, callback, data)
 end
 
 -- Creates new group chat and send corresponding messageGroupChatCreate, returns created chat
--- @user_ids Identifiers of users to add to the group
+-- @user_ids Identifiers of users to add to the group -- vector<int32>
 -- @title Title of new group chat, 1-255 characters
 function tdbot.createNewGroupChat(userids, chattitle, callback, data)
   assert (tdbot_function ({
     _ = 'createNewGroupChat',
-    user_ids = userids,
+    user_ids = getVector(userids),
     title = tostring(chattitle)
   }, callback or dl_cb, data))
 end
@@ -1362,12 +1379,12 @@ end
 -- Members can't be added to broadcast channel if it has more than 200 members.
 -- Members will not be added until chat state will be synchronized with the server
 -- @chat_id Chat identifier
--- @user_ids Identifiers of the users to add
+-- @user_ids Identifiers of the users to add -- vector<int32>
 function tdbot.addChatMembers(chatid, userids, callback, data)
   assert (tdbot_function ({
     _ = 'addChatMembers',
     chat_id = chatid,
-    user_ids = userids,
+    user_ids = getVector(userids),
   }, callback or dl_cb, data))
 end
 
@@ -1467,11 +1484,11 @@ function tdbot.searchChatMembers(chatid, query, lim, callback, data)
 end
 
 -- Changes list or order of pinned chats
--- @chat_ids New list of pinned chats
+-- @chat_ids New list of pinned chats -- vector<int53>
 function tdbot.setPinnedChats(chatids, callback, data)
   assert (tdbot_function ({
     _ = 'setPinnedChats',
-    chat_ids = chatids
+    chat_ids = getVector(chatids)
   }, callback or dl_cb, data))
 end
 
@@ -1705,7 +1722,7 @@ function tdbot.getBlockedUsers(off, lim, callback, data)
 end
 
 -- Adds new contacts/edits existing contacts, contacts user identifiers are ignored
--- @contacts List of contacts to import/edit
+-- @contacts List of contacts to import/edit -- vector<contact>
 -- @phone_number User's phone number
 -- @first_name User first name, 1-255 characters
 -- @last_name User last name
@@ -1737,11 +1754,11 @@ function tdbot.searchContacts(que, lim, callback, data)
 end
 
 -- Deletes users from contacts list
--- @user_ids Identifiers of users to be deleted
+-- @user_ids Identifiers of users to be deleted -- vector<int32>
 function tdbot.deleteContacts(userids, callback, data)
   assert (tdbot_function ({
     _ = 'deleteContacts',
-    user_ids = userids,
+    user_ids = getVector(userids),
   }, callback or dl_cb, data))
 end
 
@@ -1856,22 +1873,22 @@ function tdbot.changeStickerSet(setid, isinstalled, isarchived, callback, data)
 end
 
 -- Informs that some trending sticker sets are viewed by the user
--- @sticker_set_ids Identifiers of viewed trending sticker sets
+-- @sticker_set_ids Identifiers of viewed trending sticker sets -- vector<int64>
 function tdbot.viewTrendingStickerSets(stickersetids, callback, data)
   assert (tdbot_function ({
     _ = 'viewTrendingStickerSets',
-    sticker_set_ids = stickersetids
+    sticker_set_ids = getVector(stickersetids)
   }, callback or dl_cb, data))
 end
 
 -- Changes the order of installed sticker sets
 -- @is_masks Pass true to change mask sticker sets order, pass false to change ordinary sticker sets order
--- @sticker_set_ids Identifiers of installed sticker sets in the new right order
+-- @sticker_set_ids Identifiers of installed sticker sets in the new right order -- vector<int64>
 function tdbot.reorderInstalledStickerSets(ismasks, stickersetids, callback, data)
   assert (tdbot_function ({
     _ = 'reorderInstalledStickerSets',
     is_masks = ismasks,
-    sticker_set_ids = stickersetids
+    sticker_set_ids = getVector(stickersetids)
   }, callback or dl_cb, data))
 end
 
@@ -2284,13 +2301,13 @@ end
 -- Reports some supergroup channel messages from a user as spam messages
 -- @channel_id Channel identifier
 -- @user_id User identifier
--- @message_ids Identifiers of messages sent in the supergroup by the user, the list should be non-empty
+-- @message_ids Identifiers of messages sent in the supergroup by the user, the list should be non-empty -- vector<int53>
 function tdbot.reportChannelSpam(channelid, userid, messageids, callback, data)
   assert (tdbot_function ({
     _ = 'reportChannelSpam',
     channel_id = getChatId(channelid).id,
     user_id = userid,
-    message_ids = messageids
+    message_ids = getVector(messageids)
   }, callback or dl_cb, data))
 end
 
@@ -2350,7 +2367,7 @@ end
 -- @from_event_id Identifier of an event from which to return result, you can use 0 to get results from the latest events
 -- @limit Maximum number of events to return, can't be greater than 100
 -- @filters Types of events to return, defaults to all
--- @user_ids User identifiers, which events to return, defaults to all users
+-- @user_ids User identifiers, which events to return, defaults to all users -- vector<int32>
 ---
 -- chatEventLogFilters Represents a set of filters used to obtain a chat event log
 -- @message_edits True, if message edits should be returned
@@ -2383,7 +2400,7 @@ function tdbot.getChatEventLog(chatid, searchquery, fromeventid, lim, userids, m
       info_changes = infochanges or 1,
       setting_changes = settingchanges or 1
     },
-    user_ids = userids
+    user_ids = getVector(userids)
   }, callback or dl_cb, data))
 end
 
@@ -2700,9 +2717,9 @@ end
 -- @ttl Limit on time passed since last access time (or creation time on some filesystems) to a file. Pass -1 to use default limit
 -- @count Limit on total count of files after deletion. Pass -1 to use default limit
 -- @immunity_delay Number of seconds after creation of a file, it can't be delited. Pass -1 to use default value
--- @file_types If not empty, only files with given types are considered. By default, all types except thumbnails, profile photos, stickers and wallpapers are deleted
+-- @file_types If not empty, only files with given types are considered. By default, all types except thumbnails, profile photos, stickers and wallpapers are deleted -- vector<FileType>
 -- @file_types: None | Animation | Audio | Document | Photo | ProfilePhoto | Secret | Sticker | Thumb | Unknown | Video | VideoNote | Voice | Wallpaper | SecretThumb
--- @chat_ids If not empty, only files from the given chats are considered. Use 0 as chat identifier to delete files not belonging to any chat, for example profile photos
+-- @chat_ids If not empty, only files from the given chats are considered. Use 0 as chat identifier to delete files not belonging to any chat, for example profile photos -- vector<int53>
 -- @exclude_chat_ids If not empty, files from the given chats are exluded. Use 0 as chat identifier to exclude all files not belonging to any chat, for example profile photos
 -- @chat_limit Same as in getStorageStatistics. Affects only returned statistics
 function tdbot.optimizeStorage(siz, tt, cnt, immunitydelay, filetypes, chatids, excludechatids, chatlimit, callback, data)
@@ -2715,8 +2732,8 @@ function tdbot.optimizeStorage(siz, tt, cnt, immunitydelay, filetypes, chatids, 
     file_types = {
       _ = 'fileType' .. filetypes
     },
-    chat_ids = chatids,
-    exclude_chat_ids = excludechatids,
+    chat_ids = getVector(chatids),
+    exclude_chat_ids = getVector(excludechatids),
     chat_limit = chatlimit
   }, callback or dl_cb, data))
 end
@@ -2985,7 +3002,7 @@ end
 -- @text Text to send
 -- @disable_web_page_preview Pass true to disable rich preview for link in the message text
 -- @clear_draft Pass true if chat draft message should be deleted
--- @entities Bold, Italic, Code, Pre, PreCode and TextUrl entities contained in the text. Non-bot users can't use TextUrl entities. Can't be used with non-null parse_mode
+-- @entities Bold, Italic, Code, Pre, PreCode and TextUrl entities contained in the text. Non-bot users can't use TextUrl entities. Can't be used with non-null parse_mode -- vector<textEntity>
 -- @parse_mode Text parse mode, nullable. Can't be used along with enitities
 function tdbot.sendText(chat_id, reply_to_message_id, text, disable_notification, from_background, reply_markup, disablewebpagepreview, parsemode, cleardraft, entity, callback, data)
   local input_message_content = {
@@ -3055,7 +3072,7 @@ end
 -- Photo message
 -- @photo Photo to send
 -- @thumb Photo thumb to send, is sent to the other party in secret chats only
--- @added_sticker_file_ids File identifiers of stickers added onto the photo
+-- @added_sticker_file_ids File identifiers of stickers added onto the photo -- vector<int32>
 -- @width Photo width
 -- @height Photo height
 -- @caption Photo caption, 0-200 characters
@@ -3065,7 +3082,7 @@ function tdbot.sendPhoto(chat_id, reply_to_message_id, photo_file, photo_thumb, 
     _ = 'inputMessagePhoto',
     photo = getInputFile(photo_file),
     thumb = photo_thumb, -- inputThumb
-    added_sticker_file_ids = addedstickerfileids,
+    added_sticker_file_ids = getVector(addedstickerfileids),
     width = photo_width,
     height = photo_height,
     caption = tostring(photo_caption),
@@ -3093,7 +3110,7 @@ end
 -- Video message
 -- @video Video to send
 -- @thumb Video thumb, if available
--- @added_sticker_file_ids File identifiers of stickers added onto the video
+-- @added_sticker_file_ids File identifiers of stickers added onto the video -- vector<int32>
 -- @duration Duration of the video in seconds
 -- @width Video width @height Video height
 -- @caption Video caption, 0-200 characters
@@ -3103,7 +3120,7 @@ function tdbot.sendVideo(chat_id, reply_to_message_id, video_file, vid_thumb, ad
     _ = 'inputMessageVideo',
     video = getInputFile(video_file),
     thumb = vid_thumb, -- inputThumb
-    added_sticker_file_ids = addedstickerfileids,
+    added_sticker_file_ids = getVector(addedstickerfileids),
     duration = vid_duration or 0,
     width = vid_width or 0,
     height = vid_height or 0,
