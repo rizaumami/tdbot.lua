@@ -10,38 +10,178 @@
 # - Run this script, e.g by execute this command: ./tl2lua
 # - Lua file(s) with similar name to tl file(s) will then be generated
 
-tdbot='tdbot.lua'
+HEADER="--[[
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 2 of the License, or
+  (at your option) any later version.
 
-# Rename existing $tdbot filename
-if [[ -f "$tdbot" ]]; then
-  mv "${tdbot%.*}"{,-$(date +%F_%R:%S)}.lua
-  printf '\n%s\n' " -- tdbot.lua found. Rename it into ${tdbot%.*}-$(date +%F_%R:%S).lua"
-fi
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
 
-while read tl; do
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software
+  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+  MA 02110-1301, USA.
+--]]
+
+local tdbot = {}
+
+function dl_cb(arg, data)
+end
+
+-- Type of chats:
+-- @chat_id = user, group, channel, and broadcast
+-- @group_id = normal group
+-- @channel_id = channel and broadcast
+local function getChatId(chat_id)
+  local chat = {}
+  local chat_id = tostring(chat_id)
+
+  if chat_id:match('^-100') then
+    local channel_id = chat_id:gsub('-100', '')
+    chat = {id = channel_id, type = 'channel'}
+  else
+    local group_id = chat_id:gsub('-', '')
+    chat = {id = group_id, type = 'group'}
+  end
+
+  return chat
+end
+
+local function getInputFile(file, conversion_str, expectedsize)
+  local input = tostring(file)
+  local infile = {}
+
+  if (conversion_str and expectedsize) then
+    infile = {
+      _ = 'inputFileGenerated',
+      original_path = tostring(file),
+      conversion = tostring(conversion_str),
+      expected_size = expectedsize
+    }
+  else
+    if input:match('/') then
+      infile = {_ = 'inputFileLocal', path = file}
+    elseif input:match('^%d+$') then
+      infile = {_ = 'inputFileId', id = file}
+    else
+      infile = {_ = 'inputFilePersistentId', persistent_id = file}
+    end
+  end
+
+  return infile
+end
+
+-- User can send bold, italic, and monospace text uses HTML or Markdown format.
+local function getParseMode(parse_mode)
+  local P = {}
+  if parse_mode then
+    local mode = parse_mode:lower()
+
+    if mode == 'markdown' or mode == 'md' then
+      P._ = 'textParseModeMarkdown'
+    elseif mode == 'html' then
+      P._ = 'textParseModeHTML'
+    end
+  end
+
+  return P
+end
+
+-- (Temporary) workaround for currently buggy telegram-bot's vector
+-- This will return lua array from strings:
+-- - {one, two, three}
+-- - {[0] = one, two, three}
+-- - {[0] = one, [1] = two, [2] = three}
+local function getVector(str)
+  local v = {}
+  local i = 1
+
+  for k in string.gmatch(str, '(%d%d%d+)') do
+    v[i] = '[' .. i-1 .. ']=\"' .. k .. '\"'
+    i = i+1
+  end
+  v = table.concat(v, ',')
+  return load('return {' .. v .. '}')()
+end"
+
+while read -r tl; do
+  # output filename
+  tdbot="${tl%.*}.lua"
+
   # get lines after '---functions---' until the end of file
   awk 'NR == 1, $0 ~ /---functions---/ {next}; {print}' "$tl" > "$tdbot"
-  # replace some caharacters
-  awk -i inplace '{gsub(/ @/, "\n-- @"); gsub(/^\/\/@description/, "--"); gsub(/^\/\/@/, "-- @"); gsub(/\. /, ".\n-- ")};1' "$tdbot"
-  awk -i inplace '/^[[:alpha:]]/{gsub(/ = .*;/, "")};1' "$tdbot"
-  # copy line
-  awk -i inplace '/^[[:alpha:]]/{print "-- function tdbot."$0};1' "$tdbot"
-  # insert strings 4th field and last field
-  awk -i inplace '/^-- function/{$3=$3"("; $NF=$NF", callback, data)\n  assert (tdbot_function ({"};1' "$tdbot"
-  # replace some caharacters
-  awk -i inplace '/^[[:alpha:]]/{$0=$0"\n  }, callback or dl_cb, data))\nend\n\n"};1' "$tdbot"
-  awk -i inplace '/^[[:alpha:]][[:alpha:]]/{gsub(/:/, "="); gsub(/ /, ",\n    ")};1' "$tdbot"
-  # format tl ID
-  awk -i inplace '/^[[:alpha:]][[:alpha:]]/{$1="    _ = '\''"$1"'\''"};1' "$tdbot"
-  # replace some caharacters
-  awk -i inplace '{gsub(/^-- function/, "function"); gsub(/    _ = '\''end'\''/, "end"); gsub(/,'\''/, "'\'',"); gsub(/\( /, "(")};1' "$tdbot"
-  awk -i inplace '/^function/{gsub(/_/, ""); gsub(/\(, /, "(")};1' "$tdbot"
-  awk -i inplace '/[[:alpha:]]=[[:alpha:]]/{gsub(/=/, " = ")};1' "$tdbot"
-  awk -i inplace '{gsub(/ = string/, " = tostring()")};1' "$tdbot"
-  # remove strings between colon (:) and space ( )
-  awk -i inplace '/^local function/{gsub(/:[^ ]* /, ", ")};1' "$tdbot"
-  # reduce multiple empty lines into one
-  awk -i inplace 'BEGIN{bl=0}/^$/{bl++;if(bl==1)print;else next}/^..*$/{bl=0;print}' "$tdbot"
-done < <(find . -type f -iname "telegram-bot*.tl")
 
-printf '\n%s\n\n' " -- New tdbot.lua has been successfully created."
+  # characters substitutions
+  awk -i inplace '{
+    gsub(/ @/, "\n-- @")
+    gsub(/^\/\/@description/, "--")
+    gsub(/^\/\/@/, "-- @")
+    gsub(/\. /, ".\n-- ")
+  };1' "$tdbot"
+
+  awk -i inplace '/^[[:alpha:]]/{
+    gsub(/ = .*;/, "")
+    print "-- function tdbot."$0
+  };1' "$tdbot"
+
+  # insert strings at 4th field and last field
+  awk -i inplace '/^-- function/{
+    $3=$3"("; $NF=$NF", callback, data)\n  assert (tdbot_function ({"
+  };1' "$tdbot"
+
+  # characters substitutions
+  awk -i inplace '/^[[:alpha:]]/{
+    $0=$0"\n  }, callback or dl_cb, data))\nend\n\n"
+  };1' "$tdbot"
+
+  awk -i inplace '/^[[:alpha:]][[:alpha:]]/{
+    gsub(/:/, "=")
+    gsub(/ /, ",\n    ")
+  };1' "$tdbot"
+
+  awk -i inplace '/^[[:alpha:]][[:alpha:]]/{
+    $1="    _ = '\''"$1"'\''"
+  };1' "$tdbot"
+
+  awk -i inplace '{
+    gsub(/^-- function/, "function")
+    gsub(/    _ = '\''end'\''/, "end")
+    gsub(/,'\''/, "'\'',")
+    gsub(/\( /, "(")
+    gsub(/=string/, " = tostring()")
+    gsub(/^\/\/-/, "-- ")
+  };1' "$tdbot"
+
+  awk -i inplace '/^function/{
+    gsub(/_/, "")
+    gsub(/\(, /, "(")
+    gsub(/:[^ ]* /, ", ")
+  };1' "$tdbot"
+
+  awk -i inplace '/[[:alpha:]]=[[:alpha:]]/{gsub(/=/, " = ")};1' "$tdbot"
+
+  # reduce multiple empty lines into one
+  awk -i inplace 'BEGIN{
+    bl=0
+  }/^$/{
+    bl++
+    if(bl==1)print
+    else next
+  }/^..*$/{
+    bl=0
+    print
+  }' "$tdbot"
+
+  # insert license and some functions to top of the script
+  awk -i inplace -v var="$HEADER" 'BEGINFILE{print var}{print}' "$tdbot"
+
+  # insert functions return at the end of the script
+  echo 'return tdbot' >> "$tdbot"
+
+  # notify user if conversion has been finished
+  printf '%s\n' " -- $tdbot has been successfully created."
+done < <(find . -type f -iname "telegram-bot*.tl")

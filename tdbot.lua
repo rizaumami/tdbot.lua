@@ -1147,10 +1147,10 @@ function tdbot.importContacts(phonenumber, firstname, lastname, userid, callback
     contacts = {
       [0] = {
         _ = 'contact',
-        phone_number_ = tostring(phonenumber),
-        first_name_ = tostring(firstname),
-        last_name_ = tostring(lastname),
-        user_id_ = userid
+        phone_number = tostring(phonenumber),
+        first_name = tostring(firstname),
+        last_name = tostring(lastname),
+        user_id = userid
       }
     },
   }, callback or dl_cb, data))
