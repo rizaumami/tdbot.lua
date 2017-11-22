@@ -27,7 +27,6 @@ function tdbot_update_callback (data)
     if msg.content._ == "messageText" then
       if msg.content.text == "ping" then
           sendText(chat_id, msg.id, '<b>pong!</b>')
-        }, dl_cb, nil))
       end
     end
   end
