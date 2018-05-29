@@ -13,87 +13,147 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
   MA 02110-1301, USA.
-]]--
+--]]
 
--- Vector form: {[0] = v1, v2, v3}
--- If false or true crashed your telegram-bot, try to change true to 1 and false to 0
-
--- Main table
 local tdbot = {}
 
 -- Does nothing, suppress 'lua: attempt to call a nil value' warning
 function dl_cb(arg, data)
 end
 
--- There are three type of chats:
--- @chat_id = user, group, channel, and broadcast
--- @group_id = normal group
--- @channel_id = channel and broadcast
+-- Type of chats:
+-- @chat_id = users, basic groups, supergroups, channels and secret chats
+-- @basicgroup_id = basic groups
+-- @supergroup_id = supergroups and channels
 local function getChatId(chat_id)
   local chat = {}
   local chat_id = tostring(chat_id)
 
   if chat_id:match('^-100') then
-    local channel_id = chat_id:gsub('-100', '')
-    chat = {id = channel_id, type = 'channel'}
+    local supergroup_id = string.sub(chat_id, 5)
+    chat = {id = supergroup_id, type = 'supergroup'}
   else
-    local group_id = chat_id:gsub('-', '')
-    chat = {id = group_id, type = 'group'}
+    local basicgroup_id = string.sub(chat_id, 2)
+    chat = {id = basicgroup_id, type = 'basicgroup'}
   end
 
   return chat
 end
 
-local function getInputFile(file, conversion_str, expectedsize)
+-- Get points to a file
+local function getInputFile(file, conversion_str, expected_size)
   local input = tostring(file)
   local infile = {}
 
   if (conversion_str and expectedsize) then
     infile = {
-      _ = 'inputFileGenerated',
+      ["@type"] = 'inputFileGenerated',
       original_path = tostring(file),
       conversion = tostring(conversion_str),
-      expected_size = expectedsize
+      expected_size = expected_size
     }
   else
     if input:match('/') then
-      infile = {_ = 'inputFileLocal', path = file}
+      infile = {["@type"] = 'inputFileLocal', path = file}
     elseif input:match('^%d+$') then
-      infile = {_ = 'inputFileId', id = file}
+      infile = {["@type"] = 'inputFileId', id = file}
     else
-      infile = {_ = 'inputFilePersistentId', persistent_id = file}
+      infile = {["@type"] = 'inputFileRemote', id = file}
     end
   end
 
   return infile
 end
 
--- User can send bold, italic, and monospace text uses HTML or Markdown format.
+tdbot.getInputFile = getInputFile
+
+-- Get the way the text should be parsed for TextEntities
 local function getParseMode(parse_mode)
   local P = {}
   if parse_mode then
     local mode = parse_mode:lower()
 
     if mode == 'markdown' or mode == 'md' then
-      P._ = 'textParseModeMarkdown'
+      P["@type"] = 'textParseModeMarkdown'
     elseif mode == 'html' then
-      P._ = 'textParseModeHTML'
+      P["@type"] = 'textParseModeHTML'
     end
   end
-
   return P
 end
 
---- (Temporary) workaround for currently buggy telegram-bot's vector
---- This will return lua array from strings:
---- - {one, two, three}
---- - {[0] = one, two, three}
---- - {[0] = one, [1] = two, [2] = three}
-local function getVector(str)
+-- Parses Bold, Italic, Code, Pre, PreCode and TextUrl entities contained in the text.
+-- This is an offline method.
+-- May be called before authorization.
+-- Can be called synchronously
+-- @text The text which should be parsed
+-- @parse_mode Text parse mode
+local function parseTextEntities(text, parse_mode, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'parseTextEntities',
+    text = tostring(text),
+    parse_mode = getParseMode(parse_mode)
+  }, callback or dl_cb, data))
+end
+
+tdbot.parseTextEntities = parseTextEntities
+
+-- Sends a message.
+-- Returns the sent message
+-- @chat_id Target chat
+-- @reply_to_message_id Identifier of the message to reply to or 0
+-- @disable_notification Pass true to disable notification for the message. Not supported in secret chats
+-- @from_background Pass true if the message is sent from the background
+-- @reply_markup Markup for replying to the message; for bots only
+-- @input_message_content The content of the message to be sent
+local function sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
+  local tdbody = {
+    ["@type"] = 'sendMessage',
+    chat_id = chat_id,
+    reply_to_message_id = reply_to_message_id or 0,
+    disable_notification = disable_notification or 0,
+    from_background = from_background or 1,
+    reply_markup = reply_markup,
+    input_message_content = input_message_content
+  }
+  if parse_mode then
+    local text = input_message_content.text and input_message_content.text.text or input_message_content.caption.text
+    parseTextEntities(text, parse_mode, function(a, d)
+      if a.tdbody.input_message_content.text then
+        a.tdbody.input_message_content.text = d
+      else
+        a.tdbody.input_message_content.caption = d
+      end
+      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
+    end, {tdbody = tdbody})
+  else
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
+  end
+end
+
+tdbot.sendMessage = sendMessage
+
+-- Set limit.
+local function setLimit(limit, num)
+  local limit = tonumber(limit)
+  local number = tonumber(num or limit)
+
+  return (number >= limit) and limit or number
+end
+
+
+-- (Temporary) workaround for currently buggy tdbot's vector
+-- This will return lua array from strings:
+-- - {one, two, three}
+-- - {[0] = one, two, three}
+-- - {[0] = one, [1] = two, [2] = three}
+local function vectorize(str)
   local v = {}
   local i = 1
 
-  for k in string.gmatch(str, '(%d%d%d+)') do
+  if not str then return v end
+
+  for k in string.gmatch(str, '(-?%d+)') do
     v[i] = '[' .. i-1 .. ']="' .. k .. '"'
     i = i+1
   end
@@ -101,2654 +161,2914 @@ local function getVector(str)
   return load('return {' .. v .. '}')()
 end
 
--- Returns current authorization state, offline request
-function tdbot.getAuthState(callback, data)
+-- Returns the current authorization state; this is an offline request.
+-- For informational purposes only.
+-- Use updateAuthorizationState instead to maintain the current authorization state
+function tdbot.getAuthorizationState(callback, data)
   assert (tdbot_function ({
-    _ = 'getAuthState'
+    ["@type"] = 'getAuthorizationState'
   }, callback or dl_cb, data))
 end
 
--- Sets user's phone number and sends authentication code to the user.
--- Works only when getAuthState returns authStateWaitPhoneNumber.
--- If phone number is not recognized or another error has happened, returns an error. Otherwise returns authStateWaitCode
--- @phone_number User's phone number in any reasonable format
--- @allow_flash_call Pass True, if code can be sent via flash call to the specified phone number
--- @is_current_phone_number Pass true, if the phone number is used on the current device. Ignored if allow_flash_call is False
-function tdbot.setAuthPhoneNumber(phonenumber, allowflashcall, iscurrentphonenumber, callback, data)
+-- Sets the parameters for TDLib initialization
+-- @parameters Parameters
+-- @use_test_dc If set to true, the Telegram test environment will be used instead of the production environment
+-- @database_directory The path to the directory for the persistent database; if empty, the current working directory will be used
+-- @files_directory The path to the directory for storing files; if empty, database_directory will be used
+-- @use_file_database If set to true, information about downloaded and uploaded files will be saved between application restarts
+-- @use_chat_info_database If set to true, the library will maintain a cache of users, basic groups, supergroups, channels and secret chats. Implies use_file_database
+-- @use_message_database If set to true, the library will maintain a cache of chats and messages. Implies use_chat_info_database
+-- @use_secret_chats If set to true, support for secret chats will be enabled
+-- @api_id Application identifier for Telegram API access, which can be obtained at https:-- my.telegram.org
+-- @api_hash Application identifier hash for Telegram API access, which can be obtained at https:-- my.telegram.org
+-- @system_language_code IETF language tag of the user's operating system language
+-- @device_model Model of the device the application is being run on
+-- @system_version Version of the operating system the application is being run on
+-- @application_version Application version
+-- @enable_storage_optimizer If set to true, old files will automatically be deleted
+-- @ignore_file_names If set to true, original file names will be ignored. Otherwise, downloaded files will be saved under names as close as possible to the original name
+function tdbot.setTdlibParameters(use_test_dc, database_directory, files_directory, use_file_database, use_chat_info_database, use_message_database, use_secret_chats, api_id, api_hash, system_language_code, device_model, system_version, application_version, enable_storage_optimizer, ignore_file_names, callback, data)
   assert (tdbot_function ({
-    _ = 'setAuthPhoneNumber',
-    phone_number = tostring(),
-    allow_flash_call = allowflashcall,
-    is_current_phone_number = iscurrentphonenumber
+    ["@type"] = 'setTdlibParameters',
+    parameters = {
+      ["@type"] = 'tdlibParameters',
+      use_test_dc = use_test_dc,
+      database_directory = tostring(database_directory),
+      files_directory = tostring(files_directory),
+      use_file_database = use_file_database,
+      use_chat_info_database = use_chat_info_database,
+      use_message_database = use_message_database,
+      use_secret_chats = use_secret_chats,
+      api_id = api_id,
+      api_hash = tostring(api_hash),
+      system_language_code = tostring(system_language_code),
+      device_model = tostring(device_model),
+      system_version = tostring(system_version),
+      application_version = tostring(application_version),
+      enable_storage_optimizer = enable_storage_optimizer,
+      ignore_file_names = ignore_file_names
+    }
   }, callback or dl_cb, data))
 end
 
--- Resends authentication code to the user.
--- Works only when getAuthState returns authStateWaitCode and next_code_type of result is not null.
--- Returns authStateWaitCode on success
-function tdbot.resendAuthCode(callback, data)
+-- Checks the database encryption key for correctness.
+-- Works only when the current authorization state is authorizationStateWaitEncryptionKey
+-- @encryption_key Encryption key to check or set up
+function tdbot.checkDatabaseEncryptionKey(encryption_key, callback, data)
   assert (tdbot_function ({
-    _ = 'resendAuthCode'
+    ["@type"] = 'checkDatabaseEncryptionKey',
+    encryption_key = encryption_key
   }, callback or dl_cb, data))
 end
 
--- Checks authentication code.
--- Works only when getAuthState returns authStateWaitCode.
--- Returns authStateWaitPassword or authStateOk on success
--- @code Verification code from SMS, Telegram message, phone call or flash call
--- @first_name User first name, if user is yet not registered, 1-255 characters
--- @last_name Optional user last name, if user is yet not registered, 0-255 characters
-function tdbot.checkAuthCode(cod, firstname, lastname, callback, data)
+-- Sets the phone number of the user and sends an authentication code to the user.
+-- Works only when the current authorization state is authorizationStateWaitPhoneNumber
+-- @phone_number The phone number of the user, in international format
+-- @allow_flash_call Pass true if the authentication code may be sent via flash call to the specified phone number
+-- @is_current_phone_number Pass true if the phone number is used on the current device.
+-- Ignored if allow_flash_call is false
+function tdbot.setAuthenticationPhoneNumber(phone_number, allow_flash_call, is_current_phone_number, callback, data)
   assert (tdbot_function ({
-    _ = 'checkAuthCode',
-    code = tostring(cod),
-    first_name = tostring(firstname),
-    last_name = tostring(lastname)
+    ["@type"] = 'setAuthenticationPhoneNumber',
+    phone_number = tostring(phone_number),
+    allow_flash_call = allow_flash_call,
+    is_current_phone_number = is_current_phone_number
   }, callback or dl_cb, data))
 end
 
--- Checks password for correctness.
--- Works only when getAuthState returns authStateWaitPassword.
--- Returns authStateOk on success
--- @password Password to check
-function tdbot.checkAuthPassword(passwd, callback, data)
+-- Re-sends an authentication code to the user.
+-- Works only when the current authorization state is authorizationStateWaitCode and the next_code_type of the result is not null
+function tdbot.resendAuthenticationCode(callback, data)
   assert (tdbot_function ({
-    _ = 'checkAuthPassword',
-    password = tostring(passwd)
+    ["@type"] = 'resendAuthenticationCode'
   }, callback or dl_cb, data))
 end
 
--- Requests to send password recovery code to email.
--- Works only when getAuthState returns authStateWaitPassword.
--- Returns authStateWaitPassword on success
-function tdbot.requestAuthPasswordRecovery(callback, data)
+-- Checks the authentication code.
+-- Works only when the current authorization state is authorizationStateWaitCode
+-- @code The verification code received via SMS, Telegram message, phone call, or flash call
+-- @first_name If the user is not yet registered, the first name of the user; 1-255 characters
+-- @last_name If the user is not yet registered; the last name of the user; optional; 0-255 characters
+function tdbot.checkAuthenticationCode(code, first_name, last_name, callback, data)
   assert (tdbot_function ({
-    _ = 'requestAuthPasswordRecovery'
+    ["@type"] = 'checkAuthenticationCode',
+    code = tostring(code),
+    first_name = tostring(first_name),
+    last_name = tostring(last_name)
   }, callback or dl_cb, data))
 end
 
--- Recovers password with recovery code sent to email.
--- Works only when getAuthState returns authStateWaitPassword.
--- Returns authStateOk on success
+-- Checks the authentication password for correctness.
+-- Works only when the current authorization state is authorizationStateWaitPassword
+-- @password The password to check
+function tdbot.checkAuthenticationPassword(password, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'checkAuthenticationPassword',
+    password = tostring(password)
+  }, callback or dl_cb, data))
+end
+
+-- Requests to send a password recovery code to an email address that was previously set up.
+-- Works only when the current authorization state is authorizationStateWaitPassword
+function tdbot.requestAuthenticationPasswordRecovery(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'requestAuthenticationPasswordRecovery'
+  }, callback or dl_cb, data))
+end
+
+-- Recovers the password with a password recovery code sent to an email address that was previously set up.
+-- Works only when the current authorization state is authorizationStateWaitPassword
 -- @recovery_code Recovery code to check
-function tdbot.recoverAuthPassword(recoverycode, callback, data)
+function tdbot.recoverAuthenticationPassword(recovery_code, callback, data)
   assert (tdbot_function ({
-    _ = 'recoverAuthPassword',
-    recovery_code = tostring(recoverycode)
+    ["@type"] = 'recoverAuthenticationPassword',
+    recovery_code = tostring(recovery_code)
   }, callback or dl_cb, data))
 end
 
--- Logs out user.
--- If force == false, begins to perform soft log out, returns authStateLoggingOut after completion.
--- If force == true then succeeds almost immediately without cleaning anything at the server, but returns error with code 401 and description 'Unauthorized'
--- @force If true, just delete all local data.
--- Session will remain in list of active sessions
-function tdbot.resetAuth(force, callback, data)
+-- Checks the authentication token of a bot; to log in as a bot.
+-- Works only when the current authorization state is authorizationStateWaitPhoneNumber.
+-- Can be used instead of setAuthenticationPhoneNumber and checkAuthenticationCode to log in
+-- @token The bot token
+function tdbot.checkAuthenticationBotToken(token, callback, data)
   assert (tdbot_function ({
-    _ = 'resetAuth',
-    force = force
-  }, callback or dl_cb, data))
-end
-
--- Check bot's authentication token to log in as a bot.
--- Works only when getAuthState returns authStateWaitPhoneNumber.
--- Can be used instead of setAuthPhoneNumber and checkAuthCode to log in.
--- Returns authStateOk on success
--- @token Bot token
-function tdbot.checkAuthBotToken(token, callback, data)
-  assert (tdbot_function ({
-    _ = 'checkAuthBotToken',
+    ["@type"] = 'checkAuthenticationBotToken',
     token = tostring(token)
   }, callback or dl_cb, data))
 end
 
--- Returns current state of two-step verification
+-- Closes the TDLib instance after a proper logout.
+-- Requires an available network connection.
+-- All local data will be destroyed.
+-- After the logout completes, updateAuthorizationState with authorizationStateClosed will be sent
+function tdbot.logOut(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'logOut'
+  }, callback or dl_cb, data))
+end
+
+-- Closes the TDLib instance.
+-- All databases will be flushed to disk and properly closed.
+-- After the close completes, updateAuthorizationState with authorizationStateClosed will be sent
+function tdbot.close(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'close'
+  }, callback or dl_cb, data))
+end
+
+-- Closes the TDLib instance, destroying all local data without a proper logout.
+-- The current user session will remain in the list of all active sessions.
+-- All local data will be destroyed.
+-- After the destruction completes updateAuthorizationState with authorizationStateClosed will be sent
+function tdbot.destroy(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'destroy'
+  }, callback or dl_cb, data))
+end
+
+-- Changes the database encryption key.
+-- Usually the encryption key is never changed and is stored in some OS keychain
+-- @new_encryption_key New encryption key
+function tdbot.setDatabaseEncryptionKey(new_encryption_key, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setDatabaseEncryptionKey',
+    new_encryption_key = new_encryption_key
+  }, callback or dl_cb, data))
+end
+
+-- Returns the current state of 2-step verification
 function tdbot.getPasswordState(callback, data)
   assert (tdbot_function ({
-    _ = 'getPasswordState'
+    ["@type"] = 'getPasswordState'
   }, callback or dl_cb, data))
 end
 
--- Changes user password.
--- If new recovery email is specified, then error EMAIL_UNCONFIRMED is returned and password change will not be applied until email confirmation.
--- Application should call getPasswordState from time to time to check if email is already confirmed
--- @old_password Old user password
--- @new_password New user password, may be empty to remove the password
--- @new_hint New password hint, can be empty
--- @set_recovery_email Pass True, if recovery email should be changed
--- @new_recovery_email New recovery email, may be empty
-function tdbot.setPassword(oldpassword, newpassword, newhint, setrecoveryemail, newrecoveryemail, callback, data)
+-- Changes the password for the user.
+-- If a new recovery email address is specified, then the error EMAIL_UNCONFIRMED is returned and the password change will not be applied until the new recovery email address has been confirmed.
+-- The application should periodically call getPasswordState to check whether the new email address has been confirmed
+-- @old_password Previous password of the user
+-- @new_password New password of the user; may be empty to remove the password
+-- @new_hint New password hint; may be empty
+-- @set_recovery_email_address Pass true if the recovery email address should be changed
+-- @new_recovery_email_address New recovery email address; may be empty
+function tdbot.setPassword(old_password, new_password, new_hint, set_recovery_email_address, new_recovery_email_address, callback, data)
   assert (tdbot_function ({
-    _ = 'setPassword',
-    old_password = tostring(oldpassword),
-    new_password = tostring(newpassword),
-    new_hint = tostring(newhint),
-    set_recovery_email = setrecoveryemail,
-    new_recovery_email = tostring(newrecoveryemail)
+    ["@type"] = 'setPassword',
+    old_password = tostring(old_password),
+    new_password = tostring(new_password),
+    new_hint = tostring(new_hint),
+    set_recovery_email_address = set_recovery_email_address,
+    new_recovery_email_address = tostring(new_recovery_email_address)
   }, callback or dl_cb, data))
 end
 
--- Returns set up recovery email.
+-- Returns a recovery email address that was previously set up.
 -- This method can be used to verify a password provided by the user
--- @password Current user password
-function tdbot.getRecoveryEmail(passwd, callback, data)
+-- @password The password for the current user
+function tdbot.getRecoveryEmailAddress(password, callback, data)
   assert (tdbot_function ({
-    _ = 'getRecoveryEmail',
-    password = tostring(passwd)
+    ["@type"] = 'getRecoveryEmailAddress',
+    password = tostring(password)
   }, callback or dl_cb, data))
 end
 
--- Changes user recovery email.
--- If new recovery email is specified, then error EMAIL_UNCONFIRMED is returned and email will not be changed until email confirmation.
--- Application should call getPasswordState from time to time to check if email is already confirmed.
--- If new_recovery_email coincides with the current set up email succeeds immediately and aborts all other requests waiting for email confirmation
--- @password Current user password
--- @new_recovery_email New recovery email
-function tdbot.setRecoveryEmail(passwd, newrecoveryemail, callback, data)
+-- Changes the recovery email address of the user.
+-- If a new recovery email address is specified, then the error EMAIL_UNCONFIRMED is returned and the email address will not be changed until the new email has been confirmed.
+-- The application should periodically call getPasswordState to check whether the email address has been confirmed.
+-- If new_recovery_email_address is the same as the email address that is currently set up, this call succeeds immediately and aborts all other requests waiting for an email confirmation
+-- @password Password of the current user
+-- @new_recovery_email_address New recovery email address
+function tdbot.setRecoveryEmailAddress(password, new_recovery_email_address, callback, data)
   assert (tdbot_function ({
-    _ = 'setRecoveryEmail',
-    password = tostring(passwd),
-    new_recovery_email = tostring(newrecoveryemail)
+    ["@type"] = 'setRecoveryEmailAddress',
+    password = tostring(password),
+    new_recovery_email_address = tostring(new_recovery_email_address)
   }, callback or dl_cb, data))
 end
 
--- Requests to send password recovery code to email
+-- Requests to send a password recovery code to an email address that was previously set up
 function tdbot.requestPasswordRecovery(callback, data)
   assert (tdbot_function ({
-    _ = 'requestPasswordRecovery'
+    ["@type"] = 'requestPasswordRecovery'
   }, callback or dl_cb, data))
 end
 
--- Recovers password with recovery code sent to email
+-- Recovers the password using a recovery code sent to an email address that was previously set up
 -- @recovery_code Recovery code to check
-function tdbot.recoverPassword(recoverycode, callback, data)
+function tdbot.recoverPassword(recovery_code, callback, data)
   assert (tdbot_function ({
-    _ = 'recoverPassword',
-    recovery_code = tostring(recoverycode)
+    ["@type"] = 'recoverPassword',
+    recovery_code = tostring(recovery_code)
   }, callback or dl_cb, data))
 end
 
--- Creates new temporary password for payments processing
+-- Creates a new temporary password for processing payments
 -- @password Persistent user password
--- @valid_for Time before temporary password will expire, seconds. Should be between 60 and 86400
-function tdbot.createTemporaryPassword(passwd, validfor, callback, data)
+-- @valid_for Time during which the temporary password will be valid, in seconds; should be between 60 and 86400
+function tdbot.createTemporaryPassword(password, valid_for, callback, data)
   assert (tdbot_function ({
-    _ = 'createTemporaryPassword',
-    password = tostring(passwd),
-    valid_for = validfor
+    ["@type"] = 'createTemporaryPassword',
+    password = tostring(password),
+    valid_for = valid_for
   }, callback or dl_cb, data))
 end
 
--- Returns information about current temporary password
+-- Returns information about the current temporary password
 function tdbot.getTemporaryPasswordState(callback, data)
   assert (tdbot_function ({
-    _ = 'getTemporaryPasswordState'
+    ["@type"] = 'getTemporaryPasswordState'
   }, callback or dl_cb, data))
 end
 
--- Handles DC_UPDATE push service notification.
+-- Handles a DC_UPDATE push service notification.
 -- Can be called before authorization
--- @dc Value of 'dc' paramater of the notification
--- @addr Value of 'addr' parameter of the notification
+-- @dc Value of the "dc" parameter of the notification
+-- @addr Value of the "addr" parameter of the notification
 function tdbot.processDcUpdate(dc, addr, callback, data)
   assert (tdbot_function ({
-    _ = 'processDcUpdate',
+    ["@type"] = 'processDcUpdate',
     dc = tostring(dc),
     addr = tostring(addr)
   }, callback or dl_cb, data))
 end
 
--- Returns current logged in user
+-- Returns the current user
 function tdbot.getMe(callback, data)
   assert (tdbot_function ({
-    _ = 'getMe'
+    ["@type"] = 'getMe'
   }, callback or dl_cb, data))
 end
 
--- Returns information about a user by its identifier, offline request if current user is not a bot
+-- Returns information about a user by their identifier.
+-- This is an offline request if the current user is not a bot
 -- @user_id User identifier
-function tdbot.getUser(userid, callback, data)
+function tdbot.getUser(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getUser',
-    user_id = userid
+    ["@type"] = 'getUser',
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
--- Returns full information about a user by its identifier
+-- Returns full information about a user by their identifier
 -- @user_id User identifier
-function tdbot.getUserFull(userid, callback, data)
+function tdbot.getUserFullInfo(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getUserFull',
-    user_id = userid
+    ["@type"] = 'getUserFullInfo',
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
--- Returns information about a group by its identifier, offline request if current user is not a bot
--- @group_id Group identifier
-function tdbot.getGroup(groupid, callback, data)
+-- Returns information about a basic group by its identifier.
+-- This is an offline request if the current user is not a bot
+-- @basic_group_id Basic group identifier
+function tdbot.getBasicGroup(basic_group_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getGroup',
-    group_id = getChatId(groupid).id
+    ["@type"] = 'getBasicGroup',
+    basic_group_id = getChatId(basic_group_id).id
   }, callback or dl_cb, data))
 end
 
--- Returns full information about a group by its identifier
--- @group_id Group identifier
-function tdbot.getGroupFull(groupid, callback, data)
+-- Returns full information about a basic group by its identifier
+-- @basic_group_id Basic group identifier
+function tdbot.getBasicGroupFullInfo(basic_group_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getGroupFull',
-    group_id = getChatId(groupid).id
+    ["@type"] = 'getBasicGroupFullInfo',
+    basic_group_id = getChatId(basic_group_id).id
   }, callback or dl_cb, data))
 end
 
--- Returns information about a channel by its identifier, offline request if current user is not a bot
--- @channel_id Channel identifier
-function tdbot.getChannel(channelid, callback, data)
+-- Returns information about a supergroup or channel by its identifier.
+-- This is an offline request if the current user is not a bot
+-- @supergroup_id Supergroup or channel identifier
+function tdbot.getSupergroup(supergroup_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChannel',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'getSupergroup',
+    supergroup_id = getChatId(supergroup_id).id
   }, callback or dl_cb, data))
 end
 
--- Returns full information about a channel by its identifier, cached for at most 1 minute
--- @channel_id Channel identifier
-function tdbot.getChannelFull(channelid, callback, data)
+-- Returns full information about a supergroup or channel by its identifier, cached for up to 1 minute
+-- @supergroup_id Supergroup or channel identifier
+function tdbot.getSupergroupFullInfo(supergroup_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChannelFull',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'getSupergroupFullInfo',
+    supergroup_id = getChatId(supergroup_id).id
   }, callback or dl_cb, data))
 end
 
--- Returns information about a secret chat by its identifier, offline request
+-- Returns information about a secret chat by its identifier.
+-- This is an offline request
 -- @secret_chat_id Secret chat identifier
-function tdbot.getSecretChat(secretchatid, callback, data)
+function tdbot.getSecretChat(secret_chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getSecretChat',
-    secret_chat_id = secretchatid
+    ["@type"] = 'getSecretChat',
+    secret_chat_id = secret_chat_id
   }, callback or dl_cb, data))
 end
 
--- Returns information about a chat by its identifier, offline request if current user is not a bot
+-- Returns information about a chat by its identifier, this is an offline request if the current user is not a bot
 -- @chat_id Chat identifier
-function tdbot.getChat(chatid, callback, data)
+function tdbot.getChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChat',
-    chat_id = chatid
+    ["@type"] = 'getChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
 -- Returns information about a message
--- @chat_id Identifier of the chat, message belongs to
+-- @chat_id Identifier of the chat the message belongs to
 -- @message_id Identifier of the message to get
-function tdbot.getMessage(chatid, messageid, callback, data)
+function tdbot.getMessage(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getMessage',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'getMessage',
+    chat_id = chat_id,
+    message_id = message_id
+  }, callback or dl_cb, data))
+end
+
+-- Returns information about a message that is replied by given message
+-- @chat_id Identifier of the chat the message belongs to
+-- @message_id Identifier of the message reply to which get
+function tdbot.getRepliedMessage(chat_id, message_id, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getRepliedMessage',
+    chat_id = chat_id,
+    message_id = message_id
+  }, callback or dl_cb, data))
+end
+
+-- Returns information about a pinned chat message
+-- @chat_id Identifier of the chat the message belongs to
+function tdbot.getChatPinnedMessage(chat_id, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getChatPinnedMessage',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
 -- Returns information about messages.
--- If message is not found, returns null on the corresponding position of the result
--- @chat_id Identifier of the chat, messages belongs to
--- @message_ids Identifiers of the messages to get -- vector<int53>
-function tdbot.getMessages(chatid, messageids, callback, data)
+-- If a message is not found, returns null on the corresponding position of the result
+-- @chat_id Identifier of the chat the messages belong to
+-- @message_ids Identifiers of the messages to get
+function tdbot.getMessages(chat_id, message_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'getMessages',
-    chat_id = chatid,
-    message_ids = getVector(messageids)
+    ["@type"] = 'getMessages',
+    chat_id = chat_id,
+    message_ids = vectorize(message_ids)
   }, callback or dl_cb, data))
 end
 
--- Returns information about a file, offline request
+-- Returns information about a file; this is an offline request
 -- @file_id Identifier of the file to get
-function tdbot.getFile(fileid, callback, data)
+function tdbot.getFile(file_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getFile',
-    file_id = fileid
+    ["@type"] = 'getFile',
+    file_id = file_id
   }, callback or dl_cb, data))
 end
 
--- Returns information about a file by its persistent id, offline request.
--- May be used to register a URL as a file for further uploading or sending as message
--- @persistent_file_id Persistent identifier of the file to get
--- @file_type File type, if known
-function tdbot.getFilePersistent(persistentfileid, filetype, callback, data)
+-- Returns information about a file by its remote ID; this is an offline request.
+-- Can be used to register a URL as a file for further uploading, or sending as a message
+-- @remote_file_id Remote identifier of the file to get
+-- @file_type File type, if known: None|Animation|Audio|Document|Photo|ProfilePhoto|Secret|Sticker|Thumbnail|Unknown|Video|VideoNote|VoiceNote|Wallpaper|SecretThumbnail
+function tdbot.getRemoteFile(remote_file_id, file_type, callback, data)
+  local file_type = file_type or 'Unknown'
   assert (tdbot_function ({
-    _ = 'getFilePersistent',
-    persistent_file_id = tostring(persistentfileid),
-    file_type = FileType
+    ["@type"] = 'getRemoteFile',
+    remote_file_id = tostring(remote_file_id),
+    file_type = {
+      ["@type"] = 'fileType' .. file_type
+    }
   }, callback or dl_cb, data))
 end
 
--- Returns list of chats in the right order, chats are sorted by (order, chat_id) in decreasing order.
--- For example, to get list of chats from the beginning, the offset_order should be equal 2^63 - 1
+-- Returns an ordered list of chats.
+-- Chats are sorted by the pair (order, chat_id) in decreasing order.
+-- (For example, to get a list of chats from the beginning, the offset_order should be equal to 2^63 - 1).
+-- For optimal performance the number of returned chats is chosen by the library.
 -- @offset_order Chat order to return chats from
 -- @offset_chat_id Chat identifier to return chats from
--- @limit Maximum number of chats to be returned. There may be less than limit chats returned even the end of the list is not reached
-function tdbot.getChats(offsetorder, offsetchatid, lim, callback, data)
+-- @limit The maximum number of chats to be returned.
+-- It is possible that fewer chats than the limit are returned even if the end of the list is not reached
+function tdbot.getChats(offset_chat_id, limit, offset_order, callback, data)
   assert (tdbot_function ({
-    _ = 'getChats',
-    offset_order = offsetorder,
-    offset_chat_id = offsetchatid,
-    limit = lim
+    ["@type"] = 'getChats',
+    offset_order = offset_order or '9223372036854775807',
+    offset_chat_id = offset_chat_id or 0,
+    limit = limit or 20
   }, callback or dl_cb, data))
 end
 
--- Searches public chat by its username.
--- Currently only private and channel chats can be public.
--- Returns chat if found, otherwise some error is returned
+-- Searches a public chat by its username.
+-- Currently only private chats, supergroups and channels can be public.
+-- Returns the chat if found; otherwise an error is returned
 -- @username Username to be resolved
 function tdbot.searchPublicChat(username, callback, data)
   assert (tdbot_function ({
-    _ = 'searchPublicChat',
+    ["@type"] = 'searchPublicChat',
     username = tostring(username)
   }, callback or dl_cb, data))
 end
 
--- Searches public chats by prefix of their username.
--- Currently only private and channel (including supergroup) chats can be public.
--- Returns meaningful number of results.
--- Returns nothing if length of the searched username prefix is less than 5.
--- Excludes private chats with contacts from the results
--- @username_prefix Prefix of the username to search
-function tdbot.searchPublicChats(usernameprefix, callback, data)
+-- Searches public chats by looking for specified query in their username and title.
+-- Currently only private chats, supergroups and channels can be public.
+-- Returns a meaningful number of results.
+-- Returns nothing if the length of the searched username prefix is less than 5.
+-- Excludes private chats with contacts and chats from the chat list from the results
+-- @query Query to search for
+function tdbot.searchPublicChats(query, callback, data)
   assert (tdbot_function ({
-    _ = 'searchPublicChats',
-    username_prefix = tostring(usernameprefix)
+    ["@type"] = 'searchPublicChats',
+    query = tostring(query)
   }, callback or dl_cb, data))
 end
 
--- Searches for specified query in the title and username of known chats, offline request.
--- Returns chats in the order of them in the chat list
--- @query Query to search for, if query is empty, returns up to 20 recently found chats
+-- Searches for the specified query in the title and username of already known chats, this is an offline request.
+-- Returns chats in the order seen in the chat list
+-- @query Query to search for.
+-- If the query is empty, returns up to 20 recently found chats
 -- @limit Maximum number of chats to be returned
-function tdbot.searchChats(query, lim, callback, data)
+function tdbot.searchChats(query, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchChats',
+    ["@type"] = 'searchChats',
     query = tostring(query),
-    limit = lim
+    limit = limit
+  }, callback or dl_cb, data))
+end
+
+-- Searches for the specified query in the title and username of already known chats via request to the server.
+-- Returns chats in the order seen in the chat list
+-- @query Query to search for
+-- @limit Maximum number of chats to be returned
+function tdbot.searchChatsOnServer(query, limit, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'searchChatsOnServer',
+    query = tostring(query),
+    limit = limit
   }, callback or dl_cb, data))
 end
 
 -- Returns a list of frequently used chats.
--- Supported only if chat info database is enabled
--- @category Category of chats to return
--- @limit Maximum number of chats to be returned, at most 30
--- category: Users | Bots | Groups | Channels | InlineBots | Calls
-function tdbot.getTopChats(cat, lim, callback, data)
+-- Supported only if the chat info database is enabled
+-- @category Category of chats to be returned: Users|Bots|Groups|Channels|InlineBots|Calls
+-- @limit Maximum number of chats to be returned; up to 30
+function tdbot.getTopChats(category, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getTopChats',
+    ["@type"] = 'getTopChats',
     category = {
-      _ = 'topChatCategory' .. cat
+      ["@type"] = 'topChatCategory' .. category
     },
-    limit = lim
+    limit = setLimit(30, limit)
   }, callback or dl_cb, data))
 end
 
--- Delete a chat from a list of frequently used chats.
--- Supported only if chat info database is enabled
+-- Removes a chat from the list of frequently used chats.
+-- Supported only if the chat info database is enabled
 -- @category Category of frequently used chats
 -- @chat_id Chat identifier
-function tdbot.deleteTopChat(cat, chatid, callback, data)
+function tdbot.removeTopChat(category, chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteTopChat',
+    ["@type"] = 'removeTopChat',
     category = {
-      _ = 'topChatCategory' .. cat
+      ["@type"] = 'topChatCategory' .. category
     },
-    chat_id = chatid
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
--- Adds chat to the list of recently found chats.
+-- Adds a chat to the list of recently found chats.
 -- The chat is added to the beginning of the list.
--- If the chat is already in the list, at first it is removed from the list
+-- If the chat is already in the list, it will be removed from the list first
 -- @chat_id Identifier of the chat to add
-function tdbot.addRecentlyFoundChat(chatid, callback, data)
+function tdbot.addRecentlyFoundChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'addRecentlyFoundChat',
-    chat_id = chatid
+    ["@type"] = 'addRecentlyFoundChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
--- Deletes chat from the list of recently found chats
--- @chat_id Identifier of the chat to delete
-function tdbot.deleteRecentlyFoundChat(chatid, callback, data)
+-- Removes a chat from the list of recently found chats
+-- @chat_id Identifier of the chat to be removed
+function tdbot.removeRecentlyFoundChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteRecentlyFoundChat',
-    chat_id = chatid
+    ["@type"] = 'removeRecentlyFoundChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
--- Clears list of recently found chats
-function tdbot.deleteRecentlyFoundChats(callback, data)
+-- Clears the list of recently found chats
+function tdbot.clearRecentlyFoundChats(callback, data)
   assert (tdbot_function ({
-    _ = 'deleteRecentlyFoundChats'
+    ["@type"] = 'clearRecentlyFoundChats'
   }, callback or dl_cb, data))
 end
 
--- Returns list of common chats with an other given user.
--- Chats are sorted by their type and creation date
--- @user_id User identifier
--- @offset_chat_id Chat identifier to return chats from, use 0 for the first request
--- @limit Maximum number of chats to be returned, up to 100
-function tdbot.getCommonChats(userid, offsetchatid, lim, callback, data)
+-- Checks whether a username can be set for a chat
+-- @chat_id Chat identifier; should be identifier of a supergroup chat, or a channel chat, or a private chat with self, or zero if chat is being created
+-- @username Username to be checked
+function tdbot.checkChatUsername(chat_id, username, callback, data)
   assert (tdbot_function ({
-    _ = 'getCommonChats',
-    user_id = userid,
-    offset_chat_id = offsetchatid,
-    limit = lim
+    ["@type"] = 'checkChatUsername',
+    chat_id = chat_id,
+    username = tostring(username)
   }, callback or dl_cb, data))
 end
 
--- Returns list of created public chats
+-- Returns a list of public chats created by the user
 function tdbot.getCreatedPublicChats(callback, data)
   assert (tdbot_function ({
-    _ = 'getCreatedPublicChats'
+    ["@type"] = 'getCreatedPublicChats'
+  }, callback or dl_cb, data))
+end
+
+-- Returns a list of common chats with a given user.
+-- Chats are sorted by their type and creation date
+-- @user_id User identifier
+-- @offset_chat_id Chat identifier starting from which to return chats; use 0 for the first request
+-- @limit Maximum number of chats to be returned; up to 100
+function tdbot.getGroupsInCommon(user_id, offset_chat_id, limit, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getGroupsInCommon',
+    user_id = user_id,
+    offset_chat_id = offset_chat_id or 0,
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
 -- Returns messages in a chat.
--- Returns result in reverse chronological order, i.e. in order of decreasing message.message_id. Offline request if only_local is true
+-- The messages are returned in a reverse chronological order (i.e., in order of decreasing message_id).
+-- For optimal performance the number of returned messages is chosen by the library.
+-- This is an offline request if only_local is true
 -- @chat_id Chat identifier
--- @from_message_id Identifier of the message near which we need a history, you can use 0 to get results from the beginning, i.e. from oldest to newest
--- @offset Specify 0 to get results exactly from from_message_id or negative offset to get specified message and some newer messages
--- @limit Maximum number of messages to be returned, should be positive and can't be greater than 100.
--- If offset is negative, limit must be greater than -offset.
--- There may be less than limit messages returned even the end of the history is not reached
--- @only_local Return only locally available messages without sending network requests
-function tdbot.getChatHistory(chatid, frommessageid, off, lim, onlylocal, callback, data)
+-- @from_message_id Identifier of the message starting from which history must be fetched; use 0 to get results from the beginning (i.e., from oldest to newest)
+-- @offset Specify 0 to get results from exactly the from_message_id or a negative offset to get the specified message and some newer messages
+-- @limit The maximum number of messages to be returned; must be positive and can't be greater than 100.
+-- If the offset is negative, the limit must be greater than -offset.
+-- Fewer messages may be returned than specified by the limit, even if the end of the message history has not been reached
+-- @only_local If true, returns only messages that are available locally without sending network requests
+function tdbot.getChatHistory(chat_id, from_message_id, offset, limit, only_local, callback, data)
   assert (tdbot_function ({
-    _ = 'getChatHistory',
-    chat_id = chatid,
-    from_message_id = frommessageid,
-    offset = off,
-    limit = lim,
-    only_local = onlylocal
+    ["@type"] = 'getChatHistory',
+    chat_id = chat_id,
+    from_message_id = from_message_id,
+    offset = offset,
+    limit = setLimit(100, limit),
+    only_local = only_local
   }, callback or dl_cb, data))
 end
 
--- Deletes all messages in the chat.
--- Can't be used for channel chats
+-- Deletes all messages in the chat only for the user.
+-- Cannot be used in channels and public supergroups
 -- @chat_id Chat identifier
--- @remove_from_chat_list Pass true, if chat should be removed from the chat list
-function tdbot.deleteChatHistory(chatid, removefromchatlist, callback, data)
+-- @remove_from_chat_list Pass true if the chat should be removed from the chats list
+function tdbot.deleteChatHistory(chat_id, remove_from_chat_list, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteChatHistory',
-    chat_id = chatid,
-    remove_from_chat_list = removefromchatlist
+    ["@type"] = 'deleteChatHistory',
+    chat_id = chat_id,
+    remove_from_chat_list = remove_from_chat_list
   }, callback or dl_cb, data))
 end
 
 -- Searches for messages with given words in the chat.
--- Returns result in reverse chronological order, i. e. in order of decreasing message_id.
--- Doesn't work in secret chats with non-empty query (searchSecretMessages should be used instead) or without enabled message database
--- @chat_id Chat identifier to search messages in
+-- Returns the results in reverse chronological order, i.e.
+-- in order of decreasing message_id.
+-- Cannot be used in secret chats with a non-empty query (searchSecretMessages should be used instead), or without an enabled message database.
+-- For optimal performance the number of returned messages is chosen by the library
+-- @chat_id Identifier of the chat in which to search messages
 -- @query Query to search for
--- @sender_user_id If not 0, only messages sent by the specified user will be returned. Doesn't supported in secret chats
--- @from_message_id Identifier of the message from which we need a history, you can use 0 to get results from the beginning
--- @offset Specify 0 to get results exactly from from_message_id or negative offset to get specified message and some newer messages
--- @limit Maximum number of messages to be returned, should be positive and can't be greater than 100. If offset is negative, limit must be greater than -offset. There may be less than limit messages returned even the end of the history is not reached
--- @filter Filter for content of the searched messages
----
--- searchMessagesFilter Represents filter for content of searched messages
--- searchMessagesFilter: Empty | Animation | Audio | Document | Photo | Video | Voice | PhotoAndVideo | Url | ChatPhoto | Call | MissedCall | VideoNote | VoiceAndVideoNote
-function tdbot.searchChatMessages(chatid, query, senderuserid, frommessageid, off, lim, searchmessagesfilter, callback, data)
+-- @sender_user_id If not 0, only messages sent by the specified user will be returned.
+-- Not supported in secret chats
+-- @from_message_id Identifier of the message starting from which history must be fetched; use 0 to get results from the beginning
+-- @offset Specify 0 to get results from exactly the from_message_id or a negative offset to get the specified message and some newer messages
+-- @limit The maximum number of messages to be returned; must be positive and can't be greater than 100.
+-- If the offset is negative, the limit must be greater than -offset.
+-- Fewer messages may be returned than specified by the limit, even if the end of the message history has not been reached
+-- @filter Filter for message content in the search results: Empty|Animation|Audio|Document|Photo|Video|VoiceNote|PhotoAndVideo|Url|ChatPhoto|Call|MissedCall|VideoNote|VoiceAndVideoNote|Mention|UnreadMention
+function tdbot.searchChatMessages(chat_id, query, filter, sender_user_id, from_message_id, offset, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchChatMessages',
-    chat_id = chatid,
+    ["@type"] = 'searchChatMessages',
+    chat_id = chat_id,
     query = tostring(query),
-    sender_user_id = senderuserid,
-    from_message_id = frommessageid,
-    offset = off,
-    limit = lim,
+    sender_user_id = sender_user_id or 0,
+    from_message_id = from_message_id or 0,
+    offset = offset or 0,
+    limit = setLimit(100, limit),
     filter = {
-      _ = 'searchMessagesFilter' .. searchmessagesfilter,
-    },
+      ["@type"] = 'searchMessagesFilter' .. filter
+    }
   }, callback or dl_cb, data))
 end
 
 -- Searches for messages in all chats except secret chats.
--- Returns result in reverse chronological order, i.e. in order of decreasing (date, chat_id, message_id)
+-- Returns the results in reverse chronological order (i.e., in order of decreasing (date, chat_id, message_id)).
+-- For optimal performance the number of returned messages is chosen by the library
 -- @query Query to search for
--- @offset_date Date of the message to search from, you can use 0 or any date in the future to get results from the beginning
--- @offset_chat_id Chat identifier of the last found message or 0 for the first request
--- @offset_message_id Message identifier of the last found message or 0 for the first request
--- @limit Maximum number of messages to be returned, at most 100
-function tdbot.searchMessages(query, offsetdate, offsetchatid, offsetmessageid, lim, callback, data)
+-- @offset_date The date of the message starting from which the results should be fetched.
+-- Use 0 or any date in the future to get results from the beginning
+-- @offset_chat_id The chat identifier of the last found message, or 0 for the first request
+-- @offset_message_id The message identifier of the last found message, or 0 for the first request
+-- @limit The maximum number of messages to be returned, up to 100.
+-- Fewer messages may be returned than specified by the limit, even if the end of the message history has not been reached
+function tdbot.searchMessages(query, offset_date, offset_chat_id, offset_message_id, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchMessages',
+    ["@type"] = 'searchMessages',
     query = tostring(query),
-    offset_date = offsetdate,
-    offset_chat_id = offsetchatid,
-    offset_message_id = offsetmessageid,
-    limit = lim
+    offset_date = offset_date or 0,
+    offset_chat_id = offset_chat_id or 0,
+    offset_message_id = offset_message_id or 0,
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
 -- Searches for messages in secret chats.
--- Returns result in reverse chronological order
--- @chat_id Identifier of a chat to search in.
+-- Returns the results in reverse chronological order.
+-- For optimal performance the number of returned messages is chosen by the library
+-- @chat_id Identifier of the chat in which to search.
 -- Specify 0 to search in all secret chats
--- @query Query to search for. If empty, searchChatMessages should be used instead
--- @from_search_id Identifier from the result of previous request, use 0 to get results from the beginning
--- @limit Maximum number of messages to be returned, can't be greater than 100
--- @filter Filter for content of searched messages
----
--- searchMessagesFilter Represents filter for content of searched messages
--- searchMessagesFilter: Empty | Animation | Audio | Document | Photo | Video | Voice | PhotoAndVideo | Url | ChatPhoto | Call | MissedCall | VideoNote | VoiceAndVideoNote
-function tdbot.searchSecretMessages(chatid, query, fromsearchid, lim, searchmessagesfilter, callback, data)
+-- @query Query to search for.
+-- If empty, searchChatMessages should be used instead
+-- @from_search_id The identifier from the result of a previous request, use 0 to get results from the beginning
+-- @limit Maximum number of messages to be returned; up to 100.
+-- Fewer messages may be returned than specified by the limit, even if the end of the message history has not been reached
+-- @filter A filter for the content of messages in the search results: Empty|Animation|Audio|Document|Photo|Video|VoiceNote|PhotoAndVideo|Url|ChatPhoto|Call|MissedCall|VideoNote|VoiceAndVideoNote|Mention|UnreadMention
+function tdbot.searchSecretMessages(chat_id, query, from_search_id, limit, filter, callback, data)
   assert (tdbot_function ({
-    _ = 'searchSecretMessages',
-    chat_id = chatid,
+    ["@type"] = 'searchSecretMessages',
+    chat_id = chat_id or 0,
     query = tostring(query),
-    from_search_id = fromsearchid,
-    limit = lim,
+    from_search_id = from_search_id or 0,
+    limit = setLimit(100, limit),
     filter = {
-      _ = 'searchMessagesFilter' .. searchmessagesfilter,
-    },
+      ["@type"] = 'searchMessagesFilter' .. filter
+    }
   }, callback or dl_cb, data))
 end
 
 -- Searches for call messages.
--- Returns result in reverse chronological order, i.e. in order of decreasing message_id
--- @from_message_id Identifier of the message from which to search, you can use 0 to get results from beginning
--- @limit Maximum number of messages to be returned, can't be greater than 100.
--- There may be less than limit messages returned even the end of the history is not reached filter
--- @only_missed If true, return only messages with missed calls
-function tdbot.searchCallMessages(frommessageid, lim, onlymissed, callback, data)
+-- Returns the results in reverse chronological order (i.
+-- e., in order of decreasing message_id).
+-- For optimal performance the number of returned messages is chosen by the library
+-- @from_message_id Identifier of the message from which to search; use 0 to get results from the beginning
+-- @limit The maximum number of messages to be returned; up to 100.
+-- Fewer messages may be returned than specified by the limit, even if the end of the message history has not been reached
+-- @only_missed If true, returns only messages with missed calls
+function tdbot.searchCallMessages(from_message_id, limit, only_missed, callback, data)
   assert (tdbot_function ({
-    _ = 'searchCallMessages',
-    from_message_id = frommessageid,
-    limit = lim,
-    only_missed = onlymissed
+    ["@type"] = 'searchCallMessages',
+    from_message_id = from_message_id or 0,
+    limit = setLimit(100, limit),
+    only_missed = only_missed
   }, callback or dl_cb, data))
 end
 
--- Returns public HTTPS link to a message.
--- Available only for messages in public channels
--- @chat_id Identifier of the chat, message belongs to
+-- Returns information about the recent locations of chat members that were sent to the chat.
+-- Returns up to 1 location message per user
+-- @chat_id Chat identifier
+-- @limit Maximum number of messages to be returned
+function tdbot.searchChatRecentLocationMessages(chat_id, limit, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'searchChatRecentLocationMessages',
+    chat_id = chat_id,
+    limit = limit
+  }, callback or dl_cb, data))
+end
+
+-- Returns all active live locations that should be updated by the client.
+-- The list is persistent across application restarts only if the message database is used
+function tdbot.getActiveLiveLocationMessages(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getActiveLiveLocationMessages'
+  }, callback or dl_cb, data))
+end
+
+-- Returns the last message sent in a chat no later than the specified date
+-- @chat_id Chat identifier
+-- @date Point in time (Unix timestamp) relative to which to search for messages
+function tdbot.getChatMessageByDate(chat_id, date, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getChatMessageByDate',
+    chat_id = chat_id,
+    date = date
+  }, callback or dl_cb, data))
+end
+
+-- Returns a public HTTPS link to a message.
+-- Available only for messages in public supergroups and channels
+-- @chat_id Identifier of the chat to which the message belongs
 -- @message_id Identifier of the message
-function tdbot.getPublicMessageLink(chatid, messageid, callback, data)
+-- @for_album Pass true if a link for a whole media album should be returned
+function tdbot.getPublicMessageLink(chat_id, message_id, for_album, callback, data)
   assert (tdbot_function ({
-    _ = 'getPublicMessageLink',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'getPublicMessageLink',
+    chat_id = chat_id,
+    message_id = message_id,
+    for_album = for_album
   }, callback or dl_cb, data))
 end
 
--- Sends a message.
--- Returns sent message
--- @chat_id Chat to send message
+-- Sends messages grouped together into an album.
+-- Currently only photo and video messages can be grouped into an album.
+-- Returns sent messages
+-- @chat_id Target chat
 -- @reply_to_message_id Identifier of a message to reply to or 0
--- @disable_notification Pass true, to disable notification about the message, doesn't works in secret chats
--- @from_background Pass true, if the message is sent from background
--- @reply_markup Bots only. Markup for replying to message
--- @input_message_content Content of a message to send
-local function sendMessage(chatid, replytomessageid, InputMessageContent, disablenotification, frombackground, replymarkup, callback, data)
+-- @disable_notification Pass true to disable notification for the messages.
+-- Not supported in secret chats
+-- @from_background Pass true if the messages are sent from the background
+-- @input_message_contents Contents of messages to be sent
+function tdbot.sendMessageAlbum(chat_id, reply_to_message_id, input_message_contents, disable_notification, from_background, callback, data)
   assert (tdbot_function ({
-    _ = 'sendMessage',
-    chat_id = chatid,
-    reply_to_message_id = replytomessageid,
-    disable_notification = disablenotification or 0,
-    from_background = frombackground or 1,
-    reply_markup = replymarkup,
-    input_message_content = InputMessageContent
+    ["@type"] = 'sendMessageAlbum',
+    chat_id = chat_id,
+    reply_to_message_id = reply_to_message_id or 0,
+    disable_notification = disable_notification,
+    from_background = from_background,
+    input_message_contents = vectorize(input_message_contents)
   }, callback or dl_cb, data))
 end
 
-tdbot.sendMessage = sendMessage
-
--- Invites bot to a chat (if it is not in the chat) and send /start to it.
--- Bot can't be invited to a private chat other than chat with the bot.
--- Bots can't be invited to broadcast channel chats and secret chats.
--- Returns sent message
+-- Invites a bot to a chat (if it is not yet a member) and sends it the /start command.
+-- Bots can't be invited to a private chat other than the chat with the bot.
+-- Bots can't be invited to channels (although they can be added as admins) and secret chats.
+-- Returns the sent message
 -- @bot_user_id Identifier of the bot
--- @chat_id Identifier of the chat
--- @parameter Hidden parameter sent to bot for deep linking (https://api.telegram.org/bots#deep-linking)
-function tdbot.sendBotStartMessage(botuserid, chatid, parameter, callback, data)
+-- @chat_id Identifier of the target chat
+-- @parameter A hidden parameter sent to the bot for deep linking purposes (https://api.telegram.org/bots#deep-linking)
+function tdbot.sendBotStartMessage(bot_user_id, chat_id, parameter, callback, data)
   assert (tdbot_function ({
-    _ = 'sendBotStartMessage',
-    bot_user_id = botuserid,
-    chat_id = chatid,
+    ["@type"] = 'sendBotStartMessage',
+    bot_user_id = bot_user_id,
+    chat_id = chat_id,
     parameter = tostring(parameter)
   }, callback or dl_cb, data))
 end
 
--- Sends result of the inline query as a message.
--- Returns sent message.
--- Always clears chat draft message
--- @chat_id Chat to send message
+-- Sends the result of an inline query as a message.
+-- Returns the sent message.
+-- Always clears a chat draft message
+-- @chat_id Target chat
 -- @reply_to_message_id Identifier of a message to reply to or 0
--- @disable_notification Pass true, to disable notification about the message, doesn't works in secret chats
--- @from_background Pass true, if the message is sent from background
+-- @disable_notification Pass true to disable notification for the message.
+-- Not supported in secret chats
+-- @from_background Pass true if the message is sent from background
 -- @query_id Identifier of the inline query
 -- @result_id Identifier of the inline result
-function tdbot.sendInlineQueryResultMessage(chatid, replytomessageid, disablenotification, frombackground, queryid, resultid, callback, data)
+function tdbot.sendInlineQueryResultMessage(chat_id, reply_to_message_id, disable_notification, from_background, query_id, result_id, callback, data)
   assert (tdbot_function ({
-    _ = 'sendInlineQueryResultMessage',
-    chat_id = chatid,
-    reply_to_message_id = replytomessageid,
-    disable_notification = disablenotification,
-    from_background = frombackground,
-    query_id = queryid,
-    result_id = tostring(resultid)
+    ["@type"] = 'sendInlineQueryResultMessage',
+    chat_id = chat_id,
+    reply_to_message_id = reply_to_message_id,
+    disable_notification = disable_notification,
+    from_background = from_background,
+    query_id = query_id,
+    result_id = tostring(result_id)
   }, callback or dl_cb, data))
 end
 
 -- Forwards previously sent messages.
--- Returns forwarded messages in the same order as message identifiers passed in message_ids.
--- If message can't be forwarded, null will be returned instead of the message
--- @chat_id Identifier of a chat to forward messages
--- @from_chat_id Identifier of a chat to forward from
--- @message_ids Identifiers of messages to forward -- vector<int53>
--- @disable_notification Pass true, to disable notification about the message, doesn't works if messages are forwarded to secret chat
--- @from_background Pass true, if the message is sent from background
-function tdbot.forwardMessages(chatid, fromchatid, messageids, disablenotification, frombackground, callback, data)
+-- Returns the forwarded messages in the same order as the message identifiers passed in message_ids.
+-- If a message can't be forwarded, null will be returned instead of the message
+-- @chat_id Identifier of the chat to which to forward messages
+-- @from_chat_id Identifier of the chat from which to forward messages
+-- @message_ids Identifiers of the messages to forward
+-- @disable_notification Pass true to disable notification for the message, doesn't work if messages are forwarded to a secret chat
+-- @from_background Pass true if the message is sent from the background
+-- @as_album True, if the messages should be grouped into an album after forwarding.
+-- For this to work, no more than 10 messages may be forwarded, and all of them must be photo or video messages
+function tdbot.forwardMessages(chat_id, from_chat_id, message_ids, disable_notification, from_background, as_album, callback, data)
   assert (tdbot_function ({
-    _ = 'forwardMessages',
-    chat_id = chatid,
-    from_chat_id = fromchatid,
-    message_ids = getVector(messageids),
-    disable_notification = disablenotification,
-    from_background = frombackground
+    ["@type"] = 'forwardMessages',
+    chat_id = chat_id,
+    from_chat_id = from_chat_id,
+    message_ids = vectorize(message_ids),
+    disable_notification = disable_notification,
+    from_background = from_background,
+    as_album = as_album
   }, callback or dl_cb, data))
 end
 
--- Changes current ttl setting in a secret chat and sends corresponding message
+-- Changes the current TTL setting (sets a new self-destruct timer) in a secret chat and sends the corresponding message
 -- @chat_id Chat identifier
--- @ttl New value of ttl in seconds
-function tdbot.sendChatSetTtlMessage(chatid, seconds, callback, data)
+-- @ttl New TTL value, in seconds
+function tdbot.sendChatSetTtlMessage(chat_id, ttl, callback, data)
   assert (tdbot_function ({
-    _ = 'sendChatSetTtlMessage',
-    chat_id = chatid,
-    ttl = seconds
+    ["@type"] = 'sendChatSetTtlMessage',
+    chat_id = chat_id,
+    ttl = ttl
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Edits message reply markup.
--- Returns edited message after edit is complete server side
--- @chat_id Chat the message belongs to
--- @message_id Identifier of the message
--- @reply_markup New message reply markup
-function tdbot.editMessageReplyMarkup(chatid, messageid, replymarkup, callback, data)
-  assert (tdbot_function ({
-    _ = 'editMessageReplyMarkup',
-    chat_id = chatid,
-    message_id = messageid,
-    reply_markup = replymarkup
-  }, callback or dl_cb, data))
-end
-
--- Bots only.
--- Edits text of an inline text or game message sent via bot
--- @inline_message_id Inline message identifier
--- @reply_markup New message reply markup
--- @input_message_content New text content of the message. Should be of type InputMessageText
-function tdbot.editInlineMessageText(inlinemessageid, replymarkup, inputmessagecontent, callback, data)
-  assert (tdbot_function ({
-    _ = 'editInlineMessageText',
-    inline_message_id = tostring(inlinemessageid),
-    reply_markup = replymarkup,
-    input_message_content = InputMessageContent
-  }, callback or dl_cb, data))
-end
-
--- Bots only.
--- Edits caption of an inline message content sent via bot
--- @inline_message_id Inline message identifier
--- @reply_markup New message reply markup
--- @caption New message content caption, 0-200 characters
-function tdbot.editInlineMessageCaption(inlinemessageid, replymarkup, caption, callback, data)
-  assert (tdbot_function ({
-    _ = 'editInlineMessageCaption',
-    inline_message_id = tostring(inlinemessageid),
-    reply_markup = replymarkup,
-    caption = tostring(caption)
-  }, callback or dl_cb, data))
-end
-
--- Bots only.
--- Edits reply markup of an inline message sent via bot
--- @inline_message_id Inline message identifier
--- @reply_markup New message reply markup
-function tdbot.editInlineMessageReplyMarkup(inlinemessageid, replymarkup, callback, data)
-  assert (tdbot_function ({
-    _ = 'editInlineMessageReplyMarkup',
-    inline_message_id = tostring(inlinemessageid),
-    reply_markup = replymarkup
-  }, callback or dl_cb, data))
-end
-
--- Bots only.
--- Sets result of an inline query
--- @inline_query_id Identifier of the inline query
--- @is_personal Does result of the query can be cached only for specified user
--- @results Results of the query -- vector<InputInlineQueryResult>
--- @cache_time Allowed time to cache results of the query in seconds
--- @next_offset Offset for the next inline query, pass empty string if there is no more results
--- @switch_pm_text If non-empty, this text should be shown on the button, which opens private chat with the bot and sends bot start message with parameter switch_pm_parameter
--- @switch_pm_parameter Parameter for the bot start message
-function tdbot.answerInlineQuery(inlinequeryid, ispersonal, results, cachetime, nextoffset, switchpmtext, switchpmparameter, callback, data)
-  assert (tdbot_function ({
-    _ = 'answerInlineQuery',
-    inline_query_id = inlinequeryid,
-    is_personal = ispersonal,
-    results = results, -- vector<InputInlineQueryResult>
-    cache_time = cachetime,
-    next_offset = tostring(nextoffset),
-    switch_pm_text = tostring(switchpmtext),
-    switch_pm_parameter = tostring(switchpmparameter)
-  }, callback or dl_cb, data))
-end
-
--- Sends notification about screenshot taken in a chat.
--- Works only in private and secret chats
+-- Sends a notification about a screenshot taken in a chat.
+-- Supported only in private and secret chats
 -- @chat_id Chat identifier
-function tdbot.sendChatScreenshotTakenNotification(chatid, callback, data)
+function tdbot.sendChatScreenshotTakenNotification(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'sendChatScreenshotTakenNotification',
-    chat_id = chatid
+    ["@type"] = 'sendChatScreenshotTakenNotification',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
 -- Deletes messages
 -- @chat_id Chat identifier
--- @message_ids Identifiers of messages to delete -- vector<int53>
--- @revoke Pass true to try to delete sent messages for all chat members (may fail if messages are too old).
--- Is always true for Channels and SecretChats
-function tdbot.deleteMessages(chatid, messageids, revok, callback, data)
+-- @message_ids Identifiers of the messages to be deleted
+-- @revoke Pass true to try to delete outgoing messages for all chat members (may fail if messages are too old).
+-- Always true for supergroups, channels and secret chats
+function tdbot.deleteMessages(chat_id, message_ids, revoke, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteMessages',
-    chat_id = chatid,
-    message_ids = getVector(messageids),
-    revoke = revok
+    ["@type"] = 'deleteMessages',
+    chat_id = chat_id,
+    message_ids = vectorize(message_ids),
+    revoke = revoke
   }, callback or dl_cb, data))
 end
 
--- Deletes all messages in the chat sent by the specified user.
--- Works only in supergroup channel chats, needs can_delete_messages administrator privileges
+-- Deletes all messages sent by the specified user to a chat.
+-- Supported only in supergroups; requires can_delete_messages administrator privileges
 -- @chat_id Chat identifier
 -- @user_id User identifier
-function tdbot.deleteMessagesFromUser(chatid, userid, callback, data)
+function tdbot.deleteChatMessagesFromUser(chat_id, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteMessagesFromUser',
-    chat_id = chatid,
-    user_id = userid
+    ["@type"] = 'deleteChatMessagesFromUser',
+    chat_id = chat_id,
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
--- Edits text of text or game message.
--- Non-bots can edit message in a limited period of time.
--- Returns edited message after edit is complete server side
--- @chat_id Chat the message belongs to
+-- Edits the text of a message (or a text of a game message).
+-- Non-bot users can edit messages for a limited period of time.
+-- Returns the edited message after the edit is completed on the server side
+-- @chat_id The chat the message belongs to
 -- @message_id Identifier of the message
--- @reply_markup Bots only. New message reply markup
--- @input_message_content New text content of the message. Should be of type InputMessageText
--- @text Text to send
--- @disable_web_page_preview Pass true to disable rich preview for link in the message text
--- @clear_draft Pass true if chat draft message should be deleted
-function tdbot.editMessageText(chatid, messageid, replymarkup, teks, disablewebpagepreview, cleardraft, entity, textparsemode, callback, data)
-  assert (tdbot_function ({
-    _ = 'editMessageText',
-    chat_id = chatid,
-    message_id = messageid,
-    reply_markup = replymarkup,
+-- @reply_markup The new message reply markup; for bots only
+-- @input_message_content New text content of the message.
+-- Should be of type InputMessageText
+function tdbot.editMessageText(chat_id, message_id, text, parse_mode, disable_web_page_preview, clear_draft, reply_markup, callback, data)
+  local tdbody = {
+    ["@type"] = 'editMessageText',
+    chat_id = chat_id,
+    message_id = message_id,
+    reply_markup = reply_markup,
     input_message_content = {
-      _ = 'inputMessageText',
-      text = tostring(teks),
-      disable_web_page_preview = disablewebpagepreview,
-      clear_draft = cleardraft,
-      entities = entity, -- vector<textEntity>
-      parse_mode = getParseMode(textparsemode)
-    },
-  }, callback or dl_cb, data))
+      ["@type"] = 'inputMessageText',
+      disable_web_page_preview = disable_web_page_preview,
+      text = {text = text},
+      clear_draft = clear_draft
+    }
+  }
+  if parse_mode then
+    parseTextEntities(text, parse_mode, function(a, d)
+      a.tdbody.input_message_content.text = d
+      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
+    end, {tdbody = tdbody})
+  else
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
+  end
 end
 
--- Edits message content caption.
--- Non-bots can edit message in a limited period of time.
--- Returns edited message after edit is complete server side
--- @chat_id Chat the message belongs to
+-- Edits the message content of a live location.
+-- Messages can be edited for a limited period of time specified in the live location.
+-- Returns the edited message after the edit is completed server-side
+-- @chat_id The chat the message belongs to
 -- @message_id Identifier of the message
--- @reply_markup Bots only. New message reply markup
--- @caption New message content caption, 0-200 characters
-function tdbot.editMessageCaption(chatid, messageid, replymarkup, capt, callback, data)
+-- @reply_markup Tew message reply markup; for bots only
+-- @location New location content of the message; may be null.
+-- Pass null to stop sharing the live location
+function tdbot.editMessageLiveLocation(chat_id, message_id, latitude, longitude, reply_markup, callback, data)
   assert (tdbot_function ({
-    _ = 'editMessageCaption',
-    chat_id = chatid,
-    message_id = messageid,
-    reply_markup = replymarkup,
-    caption = tostring(capt)
+    ["@type"] = 'editMessageLiveLocation',
+    chat_id = chat_id,
+    message_id = message_id,
+    reply_markup = reply_markup,
+    location = {
+      ["@type"] = 'location',
+      latitude = latitude,
+      longitude = longitude
+    }
   }, callback or dl_cb, data))
 end
 
--- Returns all mentions, hashtags, bot commands, URLs and emails contained in the text.
--- Offline method.
+-- Edits the message content caption.
+-- Non-bots can edit messages for a limited period of time.
+-- Returns the edited message after the edit is completed server-side
+-- @chat_id The chat the message belongs to
+-- @message_id Identifier of the message
+-- @reply_markup The new message reply markup; for bots only
+-- @caption New message content caption; 0-200 characters
+function tdbot.editMessageCaption(chat_id, message_id, caption, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editMessageCaption',
+    chat_id = chat_id,
+    message_id = message_id,
+    reply_markup = reply_markup,
+    caption = {
+      ["@type"] = 'formattedText',
+      text = tostring(caption)
+    }
+  }, callback or dl_cb, data))
+end
+
+-- Edits the message reply markup; for bots only.
+-- Returns the edited message after the edit is completed server-side
+-- @chat_id The chat the message belongs to
+-- @message_id Identifier of the message
+-- @reply_markup New message reply markup
+function tdbot.editMessageReplyMarkup(chat_id, message_id, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editMessageReplyMarkup',
+    chat_id = chat_id,
+    message_id = message_id,
+    reply_markup = reply_markup
+  }, callback or dl_cb, data))
+end
+
+-- Edits the text of an inline text or game message sent via a bot; for bots only
+-- @inline_message_id Inline message identifier
+-- @reply_markup New message reply markup
+-- @input_message_content New text content of the message.
+-- Should be of type InputMessageText
+function tdbot.editInlineMessageText(inline_message_id, reply_markup, input_message_content, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editInlineMessageText',
+    inline_message_id = tostring(inline_message_id),
+    reply_markup = reply_markup,
+    input_message_content = input_message_content
+  }, callback or dl_cb, data))
+end
+
+-- Edits the content of a live location in an inline message sent via a bot; for bots only
+-- @inline_message_id Inline message identifier
+-- @reply_markup New message reply markup
+-- @location New location content of the message; may be null.
+-- Pass null to stop sharing the live location
+function tdbot.editInlineMessageLiveLocation(inline_message_id, latitude, longitude, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editInlineMessageLiveLocation',
+    inline_message_id = tostring(inline_message_id),
+    reply_markup = reply_markup,
+    location = {
+      ["@type"] = 'location',
+      latitude = latitude,
+      longitude = longitude
+    }
+  }, callback or dl_cb, data))
+end
+
+-- Edits the caption of an inline message sent via a bot; for bots only
+-- @inline_message_id Inline message identifier
+-- @reply_markup New message reply markup
+-- @caption New message content caption; 0-200 characters
+function tdbot.editInlineMessageCaption(inline_message_id, caption, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editInlineMessageCaption',
+    inline_message_id = tostring(inline_message_id),
+    reply_markup = reply_markup,
+    caption = {
+      ["@type"] = 'formattedText',
+      text = tostring(caption)
+    }
+  }, callback or dl_cb, data))
+end
+
+-- Edits the reply markup of an inline message sent via a bot; for bots only
+-- @inline_message_id Inline message identifier
+-- @reply_markup New message reply markup
+function tdbot.editInlineMessageReplyMarkup(inline_message_id, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editInlineMessageReplyMarkup',
+    inline_message_id = tostring(inline_message_id),
+    reply_markup = reply_markup
+  }, callback or dl_cb, data))
+end
+
+-- Returns all entities (mentions, hashtags, cashtags, bot commands, URLs, and email addresses) contained in the text.
+-- This is an offline method.
 -- Can be called before authorization.
 -- Can be called synchronously
--- @text Text to find entites in
+-- @text The text in which to look for entites
 function tdbot.getTextEntities(text, callback, data)
   assert (tdbot_function ({
-    _ = 'getTextEntities',
+    ["@type"] = 'getTextEntities',
     text = tostring(text)
   }, callback or dl_cb, data))
 end
 
--- Returns file's mime type guessing only by its extension.
--- Returns empty string on failure.
--- Offline method.
+-- Returns the MIME type of a file, guessed by its extension.
+-- Returns an empty string on failure.
+-- This is an offline method.
 -- Can be called before authorization.
 -- Can be called synchronously
--- @file_name Name of the file or path to the file
-function tdbot.getFileMimeType(filename, callback, data)
+-- @file_name The name of the file or path to the file
+function tdbot.getFileMimeType(file_name, callback, data)
   assert (tdbot_function ({
-    _ = 'getFileMimeType',
-    file_name = tostring(filename)
+    ["@type"] = 'getFileMimeType',
+    file_name = tostring(file_name)
   }, callback or dl_cb, data))
 end
 
--- Returns file's extension guessing only by its mime type.
--- Returns empty string on failure.
--- Offline method.
+-- Returns the extension of a file, guessed by its MIME type.
+-- Returns an empty string on failure.
+-- This is an offline method.
 -- Can be called before authorization.
 -- Can be called synchronously
--- @mime_type Mime type of the file
-function tdbot.getFileExtension(mimetype, callback, data)
+-- @mime_type The MIME type of the file
+function tdbot.getFileExtension(mime_type, callback, data)
   assert (tdbot_function ({
-    _ = 'getFileExtension',
-    mime_type = tostring(mimetype)
+    ["@type"] = 'getFileExtension',
+    mime_type = tostring(mime_type)
   }, callback or dl_cb, data))
 end
 
--- Sends inline query to a bot and returns its results.
--- Returns error with code 502 if bot fails to answer the query before query timeout expires.
--- Unavailable for bots
--- @bot_user_id Identifier of the bot send query to
--- @chat_id Identifier of the chat, where the query is sent
--- @user_location User location, only if needed
+-- Sends an inline query to a bot and returns its results.
+-- Returns an error with code 502 if the bot fails to answer the query before the query timeout expires
+-- @bot_user_id The identifier of the target bot
+-- @chat_id Identifier of the chat, where the query was sent
+-- @user_location Location of the user, only if needed
 -- @query Text of the query
 -- @offset Offset of the first entry to return
----
--- location on Earth
--- @latitude Latitude of location in degrees as defined by sender
--- @longitude Longitude of location in degrees as defined by sender
-function tdbot.getInlineQueryResults(botuserid, chatid, lat, lon, query, off, callback, data)
+function tdbot.getInlineQueryResults(bot_user_id, chat_id, latitude, longitude, query, offset, callback, data)
   assert (tdbot_function ({
-    _ = 'getInlineQueryResults',
-    bot_user_id = botuserid,
-    chat_id = chatid,
+    ["@type"] = 'getInlineQueryResults',
+    bot_user_id = bot_user_id,
+    chat_id = chat_id,
     user_location = {
-      _ = 'location',
-      latitude = lat,
-      longitude = lon
+      ["@type"] = 'location',
+      latitude = latitude,
+      longitude = longitude
     },
     query = tostring(query),
-    offset = tostring(off)
+    offset = tostring(offset)
   }, callback or dl_cb, data))
 end
 
--- Sends callback query to a bot and returns answer to it.
--- Returns error with code 502 if bot fails to answer the query before query timeout expires.
--- Unavailable for bots
--- @chat_id Identifier of the chat with a message
--- @message_id Identifier of the message, from which the query is originated
--- @payload Query payload
----
--- callbackQueryPayload Represents payload of a callback query
--- @data Data that was attached to the callback button
--- @game_short_name Short name of the game that was attached to the callback button
-function tdbot.getCallbackQueryAnswer(chatid, messageid, query_payload, cb_query_payload, callback, data)
-  local callback_query_payload = {}
-
-  if query_payload == 'Data' then
-    callback_query_payload.data = cb_query_payload
-  elseif query_payload == 'Game' then
-    callback_query_payload.game_short_name = cb_query_payload
-  end
-
-  callback_query_payload._ = 'callbackQueryPayload' .. query_payload,
-
+-- Sets the result of an inline query; for bots only
+-- @inline_query_id Identifier of the inline query
+-- @is_personal True, if the result of the query can be cached for the specified user
+-- @results The results of the query
+-- @cache_time Allowed time to cache the results of the query, in seconds
+-- @next_offset Offset for the next inline query; pass an empty string if there are no more results
+-- @switch_pm_text If non-empty, this text should be shown on the button that opens a private chat with the bot and sends a start message to the bot with the parameter switch_pm_parameter
+-- @switch_pm_parameter The parameter for the bot start message
+function tdbot.answerInlineQuery(inline_query_id, is_personal, results, cache_time, next_offset, switch_pm_text, switch_pm_parameter, callback, data)
   assert (tdbot_function ({
-    _ = 'getCallbackQueryAnswer',
-    chat_id = chatid,
-    message_id = messageid,
-    payload = callback_query_payload
+    ["@type"] = 'answerInlineQuery',
+    inline_query_id = inline_query_id,
+    is_personal = is_personal,
+    --results = vector<InputInlineQueryResult>,
+    cache_time = cache_time,
+    next_offset = tostring(next_offset),
+    switch_pm_text = tostring(switch_pm_text),
+    switch_pm_parameter = tostring(switch_pm_parameter)
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Sets result of a callback query
+-- Sends a callback query to a bot and returns an answer.
+-- Returns an error with code 502 if the bot fails to answer the query before the query timeout expires
+-- @chat_id Identifier of the chat with the message
+-- @message_id Identifier of the message from which the query originated
+-- @payload Query payload: Data or Game
+function tdbot.getCallbackQueryAnswer(chat_id, message_id, payload, data, game_short_name, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getCallbackQueryAnswer',
+    chat_id = chat_id,
+    message_id = message_id,
+    payload = {
+      ["@type"] = 'callbackQueryPayload' .. payload,
+      data = data,
+      game_short_name = game_short_name
+    }
+  }, callback or dl_cb, data))
+end
+
+-- Sets the result of a callback query; for bots only
 -- @callback_query_id Identifier of the callback query
 -- @text Text of the answer
--- @show_alert If true, an alert should be shown to the user instead of a toast
--- @url Url to be opened
--- @cache_time Allowed time to cache result of the query in seconds
-function tdbot.answerCallbackQuery(callbackqueryid, text, showalert, url, cachetime, callback, data)
+-- @show_alert If true, an alert should be shown to the user instead of a toast notification
+-- @url URL to be opened
+-- @cache_time Time during which the result of the query can be cached, in seconds
+function tdbot.answerCallbackQuery(callback_query_id, text, show_alert, url, cache_time, callback, data)
   assert (tdbot_function ({
-    _ = 'answerCallbackQuery',
-    callback_query_id = callbackqueryid,
+    ["@type"] = 'answerCallbackQuery',
+    callback_query_id = callback_query_id,
     text = tostring(text),
-    show_alert = showalert,
+    show_alert = show_alert,
     url = tostring(url),
-    cache_time = cachetime
+    cache_time = cache_time
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Sets result of a shipping query
+-- Sets the result of a shipping query; for bots only
 -- @shipping_query_id Identifier of the shipping query
--- @shipping_options Available shipping options -- vector<shippingOption>
--- @error_message Error message, empty on success
-function tdbot.answerShippingQuery(shippingqueryid, shippingoptions, errormessage, callback, data)
+-- @shipping_options Available shipping options
+-- @error_message An error message, empty on success
+function tdbot.answerShippingQuery(shipping_query_id, shipping_options, error_message, callback, data)
   assert (tdbot_function ({
-    _ = 'answerShippingQuery',
-    shipping_query_id = shippingqueryid,
-    shipping_options = shippingoptions,
-    error_message = tostring(errormessage)
+    ["@type"] = 'answerShippingQuery',
+    shipping_query_id = shipping_query_id,
+    -- shipping_options = vector<shippingOption>,
+    error_message = tostring(error_message)
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Sets result of a pre checkout query
+-- Sets the result of a pre-checkout query; for bots only
 -- @pre_checkout_query_id Identifier of the pre-checkout query
--- @error_message Error message, empty on success
-function tdbot.answerPreCheckoutQuery(precheckoutqueryid, errormessage, callback, data)
+-- @error_message An error message, empty on success
+function tdbot.answerPreCheckoutQuery(pre_checkout_query_id, error_message, callback, data)
   assert (tdbot_function ({
-    _ = 'answerPreCheckoutQuery',
-    pre_checkout_query_id = precheckoutqueryid,
-    error_message = tostring(errormessage)
+    ["@type"] = 'answerPreCheckoutQuery',
+    pre_checkout_query_id = pre_checkout_query_id,
+    error_message = tostring(error_message)
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Updates game score of the specified user in the game
--- @chat_id Chat a message with the game belongs to
+-- Updates the game score of the specified user in the game; for bots only
+-- @chat_id The chat to which the message with the game
 -- @message_id Identifier of the message
--- @edit_message True, if message should be edited
+-- @edit_message True, if the message should be edited
 -- @user_id User identifier
--- @score New score
--- @force Pass True to update the score even if it decreases.
--- If score is 0, user will be deleted from the high scores table
-function tdbot.setGameScore(chatid, messageid, editmessage, userid, score, force, callback, data)
+-- @score The new score
+-- @force Pass true to update the score even if it decreases.
+-- If the score is 0, the user will be deleted from the high score table
+function tdbot.setGameScore(chat_id, message_id, edit_message, user_id, score, force, callback, data)
   assert (tdbot_function ({
-    _ = 'setGameScore',
-    chat_id = chatid,
-    message_id = messageid,
-    edit_message = editmessage,
-    user_id = userid,
+    ["@type"] = 'setGameScore',
+    chat_id = chat_id,
+    message_id = message_id,
+    edit_message = edit_message,
+    user_id = user_id,
     score = score,
     force = force
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Updates game score of the specified user in the game
+-- Updates the game score of the specified user in a game; for bots only
 -- @inline_message_id Inline message identifier
--- @edit_message True, if message should be edited
+-- @edit_message True, if the message should be edited
 -- @user_id User identifier
--- @score New score
--- @force Pass True to update the score even if it decreases.
--- If score is 0, user will be deleted from the high scores table
-function tdbot.setInlineGameScore(inlinemessageid, editmessage, userid, score, force, callback, data)
+-- @score The new score
+-- @force Pass true to update the score even if it decreases.
+-- If the score is 0, the user will be deleted from the high score table
+function tdbot.setInlineGameScore(inline_message_id, edit_message, user_id, score, force, callback, data)
   assert (tdbot_function ({
-    _ = 'setInlineGameScore',
-    inline_message_id = tostring(inlinemessageid),
-    edit_message = editmessage,
-    user_id = userid,
+    ["@type"] = 'setInlineGameScore',
+    inline_message_id = tostring(inline_message_id),
+    edit_message = edit_message,
+    user_id = user_id,
     score = score,
     force = force
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Returns game high scores and some part of the score table around of the specified user in the game
--- @chat_id Chat a message with the game belongs to
+-- Returns the high scores for a game and some part of the high score table in the range of the specified user; for bots only
+-- @chat_id The chat that contains the message with the game
 -- @message_id Identifier of the message
--- @user_id User identifie
-function tdbot.getGameHighScores(chatid, messageid, userid, callback, data)
+-- @user_id User identifier
+function tdbot.getGameHighScores(chat_id, message_id, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getGameHighScores',
-    chat_id = chatid,
-    message_id = messageid,
-    user_id = userid
+    ["@type"] = 'getGameHighScores',
+    chat_id = chat_id,
+    message_id = message_id,
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Returns game high scores and some part of the score table around of the specified user in the game
+-- Returns game high scores and some part of the high score table in the range of the specified user; for bots only
 -- @inline_message_id Inline message identifier
 -- @user_id User identifier
-function tdbot.getInlineGameHighScores(inlinemessageid, userid, callback, data)
+function tdbot.getInlineGameHighScores(inline_message_id, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getInlineGameHighScores',
-    inline_message_id = tostring(inlinemessageid),
-    user_id = userid
+    ["@type"] = 'getInlineGameHighScores',
+    inline_message_id = tostring(inline_message_id),
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
--- Deletes default reply markup from chat.
--- This method needs to be called after one-time keyboard or ForceReply reply markup has been used.
--- UpdateChatReplyMarkup will be send if reply markup will be changed
+-- Deletes the default reply markup from a chat.
+-- Must be called after a one-time keyboard or a ForceReply reply markup has been used.
+-- UpdateChatReplyMarkup will be sent if the reply markup will be changed
 -- @chat_id Chat identifier
--- @message_id Message identifier of used keyboard
-function tdbot.deleteChatReplyMarkup(chatid, messageid, callback, data)
+-- @message_id The message identifier of the used keyboard
+function tdbot.deleteChatReplyMarkup(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteChatReplyMarkup',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'deleteChatReplyMarkup',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
--- Sends notification about user activity in a chat
+-- Sends a notification about user activity in a chat
 -- @chat_id Chat identifier
--- @action Action description
----
--- chatAction Describes different types of activity in a chat
--- @progress Upload progress in percents
--- chatAction: Typing | RecordingVideo | UploadingVideo | RecordingVoice | UploadingVoice | UploadingPhoto | UploadingDocument | ChoosingLocation | ChoosingContact | StartPlayingGame | RecordingVideoNote | UploadingVideoNote | Cancel
-function tdbot.sendChatAction(chatid, act, uploadprogress, callback, data)
+-- @action The action description
+-- chatAction: Typing|RecordingVideo|UploadingVideo|RecordingVoiceNote|UploadingVoiceNote|UploadingPhoto|UploadingDocument|ChoosingLocation|ChoosingContact|StartPlayingGame|RecordingVideoNote|UploadingVideoNote|Cancel
+-- @progress Upload progress, as a percentage
+function tdbot.sendChatAction(chat_id, action, progress, callback, data)
   assert (tdbot_function ({
-    _ = 'sendChatAction',
-    chat_id = chatid,
+    ["@type"] = 'sendChatAction',
+    chat_id = chat_id,
     action = {
-      _ = 'chatAction' .. act,
-      progress = uploadprogress
-    },
+      ["@type"] = 'chatAction' .. action,
+      progress = progress or 100
+    }
   }, callback or dl_cb, data))
 end
 
--- Chat is opened by the user.
--- Many useful activities depends on chat being opened or closed.
--- For example, in channels all updates are received only for opened chats
+-- This method should be called if the chat is opened by the user.
+-- Many useful activities depend on the chat being opened or closed (e.g., in supergroups and channels all updates are received only for opened chats)
 -- @chat_id Chat identifier
-function tdbot.openChat(chatid, callback, data)
+function tdbot.openChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'openChat',
-    chat_id = chatid
+    ["@type"] = 'openChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
--- Chat is closed by the user.
--- Many useful activities depends on chat being opened or closed.
+-- This method should be called if the chat is closed by the user.
+-- Many useful activities depend on the chat being opened or closed
 -- @chat_id Chat identifier
-function tdbot.closeChat(chatid, callback, data)
+function tdbot.closeChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'closeChat',
-    chat_id = chatid
+    ["@type"] = 'closeChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
--- Messages are viewed by the user.
--- Many useful activities depends on message being viewed.
--- For example, marking messages as read, incrementing of view counter, updating of view counter, removing of deleted messages in channels
+-- This method should be called if messages are being viewed by the user.
+-- Many useful activities depend on whether the messages are currently being viewed or not (e.g., marking messages as read, incrementing a view counter, updating a view counter, removing deleted messages in supergroups and channels)
 -- @chat_id Chat identifier
--- @message_ids Identifiers of viewed messages -- vector<int53>
-function tdbot.viewMessages(chatid, messageids, callback, data)
+-- @message_ids The identifiers of the messages being viewed
+-- @force_read True, if messages in closed chats should be marked as read
+function tdbot.viewMessages(chat_id, message_ids, force_read, callback, data)
   assert (tdbot_function ({
-    _ = 'viewMessages',
-    chat_id = chatid,
-    message_ids = getVector(messageids)
+    ["@type"] = 'viewMessages',
+    chat_id = chat_id,
+    message_ids = vectorize(message_ids),
+    force_read = force_read
   }, callback or dl_cb, data))
 end
 
--- Message content is opened, for example the user has opened a photo, a video, a document, a location or a venue or have listened to an audio or a voice message.
--- You will receive updateOpenMessageContent if something has changed
+-- This method should be called if the message content has been opened (e.g., the user has opened a photo, video, document, location or venue, or has listened to an audio file or voice note message).
+-- An updateMessageContentOpened update will be generated if something has changed
 -- @chat_id Chat identifier of the message
--- @message_id Identifier of the message with opened content
-function tdbot.openMessageContent(chatid, messageid, callback, data)
+-- @message_id Identifier of the message with the opened content
+function tdbot.openMessageContent(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'openMessageContent',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'openMessageContent',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
--- Returns existing chat corresponding to the given user
--- @user_id User identifier
-function tdbot.createPrivateChat(userid, callback, data)
-  assert (tdbot_function ({
-    _ = 'createPrivateChat',
-    user_id = userid
-  }, callback or dl_cb, data))
-end
-
--- Returns existing chat corresponding to the known group
--- @group_id Group identifier
-function tdbot.createGroupChat(groupid, callback, data)
-  assert (tdbot_function ({
-    _ = 'createGroupChat',
-    group_id = getChatId(groupid).id
-  }, callback or dl_cb, data))
-end
-
--- Returns existing chat corresponding to the known channel
--- @channel_id Channel identifier
-function tdbot.createChannelChat(channelid, callback, data)
-  assert (tdbot_function ({
-    _ = 'createChannelChat',
-    channel_id = getChatId(channelid).id
-  }, callback or dl_cb, data))
-end
-
--- Returns existing chat corresponding to the known secret chat
--- @secret_chat_id SecretChat identifier
-function tdbot.createSecretChat(secretchatid, callback, data)
-  assert (tdbot_function ({
-    _ = 'createSecretChat',
-    secret_chat_id = secretchatid
-  }, callback or dl_cb, data))
-end
-
--- Creates new group chat and send corresponding messageGroupChatCreate, returns created chat
--- @user_ids Identifiers of users to add to the group -- vector<int32>
--- @title Title of new group chat, 1-255 characters
-function tdbot.createNewGroupChat(userids, chattitle, callback, data)
-  assert (tdbot_function ({
-    _ = 'createNewGroupChat',
-    user_ids = getVector(userids),
-    title = tostring(chattitle)
-  }, callback or dl_cb, data))
-end
-
--- Creates new channel chat and send corresponding messageChannelChatCreate, returns created chat
--- @title Title of new channel chat, 1-255 characters
--- @is_supergroup True, if supergroup chat should be created
--- @description Channel description, 0-255 characters
-function tdbot.createNewChannelChat(title, issupergroup, channelldescription, callback, data)
-  assert (tdbot_function ({
-    _ = 'createNewChannelChat',
-    title = tostring(title),
-    is_supergroup = issupergroup,
-    description = tostring(channelldescription)
-  }, callback or dl_cb, data))
-end
-
--- Creates new secret chat, returns created chat
--- @user_id Identifier of a user to create secret chat with
-function tdbot.createNewSecretChat(userid, callback, data)
-  assert (tdbot_function ({
-    _ = 'createNewSecretChat',
-    user_id = userid
-  }, callback or dl_cb, data))
-end
-
--- Creates new channel supergroup chat from existing group chat and send corresponding messageChatMigrateTo and messageChatMigrateFrom.
--- Deactivates group
--- @chat_id Group chat identifier
-function tdbot.migrateGroupChatToChannelChat(chatid, callback, data)
-  assert (tdbot_function ({
-    _ = 'migrateGroupChatToChannelChat',
-    chat_id = chatid
-  }, callback or dl_cb, data))
-end
-
--- Changes chat title.
--- Works only for group and channel chats.
--- Requires administrator rights in groups and appropriate administrator right in channels.
--- Title will not change before request to the server completes
+-- Marks all mentions in a chat as read
 -- @chat_id Chat identifier
--- @title New title of the chat, 1-255 characters
-function tdbot.changeChatTitle(chatid, title, callback, data)
+function tdbot.readAllChatMentions(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChatTitle',
-    chat_id = chatid,
+    ["@type"] = 'readAllChatMentions',
+    chat_id = chat_id
+  }, callback or dl_cb, data))
+end
+
+-- Returns an existing chat corresponding to a given user
+-- @user_id User identifier
+-- @force If true, the chat will be created without network request.
+-- In this case all information about the chat except its type, title and photo can be incorrect
+function tdbot.createPrivateChat(user_id, force, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'createPrivateChat',
+    user_id = user_id,
+    force = force
+  }, callback or dl_cb, data))
+end
+
+-- Returns an existing chat corresponding to a known basic group
+-- @basic_group_id Basic group identifier
+-- @force If true, the chat will be created without network request.
+-- In this case all information about the chat except its type, title and photo can be incorrect
+function tdbot.createBasicGroupChat(basic_group_id, force, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'createBasicGroupChat',
+    basic_group_id = getChatId(basic_group_id).id,
+    force = force
+  }, callback or dl_cb, data))
+end
+
+-- Returns an existing chat corresponding to a known supergroup or channel
+-- @supergroup_id Supergroup or channel identifier
+-- @force If true, the chat will be created without network request.
+-- In this case all information about the chat except its type, title and photo can be incorrect
+function tdbot.createSupergroupChat(supergroup_id, force, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'createSupergroupChat',
+    supergroup_id = getChatId(supergroup_id).id,
+    force = force
+  }, callback or dl_cb, data))
+end
+
+-- Returns an existing chat corresponding to a known secret chat
+-- @secret_chat_id Secret chat identifier
+function tdbot.createSecretChat(secret_chat_id, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'createSecretChat',
+    secret_chat_id = secret_chat_id
+  }, callback or dl_cb, data))
+end
+
+-- Creates a new basic group and sends a corresponding messageBasicGroupChatCreate.
+-- Returns the newly created chat
+-- @user_ids Identifiers of users to be added to the basic group
+-- @title Title of the new basic group; 1-255 characters
+function tdbot.createNewBasicGroupChat(user_ids, title, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'createNewBasicGroupChat',
+    user_ids = vectorize(user_ids),
     title = tostring(title)
   }, callback or dl_cb, data))
 end
 
--- Changes chat photo.
--- Works only for group and channel chats.
--- Requires administrator rights in groups and appropriate administrator right in channels.
--- Photo will not change before request to the server completes
+-- Creates a new supergroup or channel and sends a corresponding messageSupergroupChatCreate.
+-- Returns the newly created chat
+-- @title Title of the new chat; 1-255 characters
+-- @is_channel True, if a channel chat should be created
+-- @param_description Chat description; 0-255 characters
+function tdbot.createNewSupergroupChat(title, is_channel, description, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'createNewSupergroupChat',
+    title = tostring(title),
+    is_channel = is_channel,
+    description = tostring(description)
+  }, callback or dl_cb, data))
+end
+
+-- Creates a new secret chat.
+-- Returns the newly created chat
+-- @user_id Identifier of the target user
+function tdbot.createNewSecretChat(user_id, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'createNewSecretChat',
+    user_id = tonumber(user_id)
+  }, callback or dl_cb, data))
+end
+
+-- Creates a new supergroup from an existing basic group and sends a corresponding messageChatUpgradeTo and messageChatUpgradeFrom.
+-- Deactivates the original basic group
+-- @chat_id Identifier of the chat to upgrade
+function tdbot.upgradeBasicGroupChatToSupergroupChat(chat_id, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'upgradeBasicGroupChatToSupergroupChat',
+    chat_id = chat_id
+  }, callback or dl_cb, data))
+end
+
+-- Changes the chat title.
+-- Supported only for basic groups, supergroups and channels.
+-- Requires administrator rights in basic groups and the appropriate administrator rights in supergroups and channels.
+-- The title will not be changed until the request to the server has been completed
+-- @chat_id Chat identifier
+-- @title New title of the chat; 1-255 characters
+function tdbot.setChatTitle(chat_id, title, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setChatTitle',
+    chat_id = chat_id,
+    title = tostring(title)
+  }, callback or dl_cb, data))
+end
+
+-- Changes the photo of a chat.
+-- Supported only for basic groups, supergroups and channels.
+-- Requires administrator rights in basic groups and the appropriate administrator rights in supergroups and channels.
+-- The photo will not be changed before request to the server has been completed
 -- @chat_id Chat identifier
 -- @photo New chat photo.
--- You can use zero InputFileId to delete chat photo.
--- Files accessible only by HTTP URL are not acceptable
-function tdbot.changeChatPhoto(chatid, foto, callback, data)
+-- You can use a zero InputFileId to delete the chat photo.
+-- Files that are accessible only by HTTP URL are not acceptable
+function tdbot.setChatPhoto(chat_id, photo, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChatPhoto',
-    chat_id = chatid,
-    photo = getInputFile(foto)
+    ["@type"] = 'setChatPhoto',
+    chat_id = chat_id,
+    photo = getInputFile(photo)
   }, callback or dl_cb, data))
 end
 
--- Changes chat draft message
+-- Changes the draft message in a chat
 -- @chat_id Chat identifier
--- @draft_message New draft message, nullable
-function tdbot.changeChatDraftMessage(chatid, replytomessageid, teks, disablewebpagepreview, cleardraft, entity, parsemode, callback, data)
-  assert (tdbot_function ({
-    _ = 'changeChatDraftMessage',
-    chat_id = chatid,
+-- @draft_message New draft message; may be null
+function tdbot.setChatDraftMessage(chat_id, reply_to_message_id, text, parse_mode, disable_web_page_preview, clear_draft, callback, data)
+  local tdbody = {
+    ["@type"] = 'setChatDraftMessage',
+    chat_id = chat_id,
     draft_message = {
-      _ = 'draftMessage',
-      reply_to_message_id = replytomessageid,
+      ["@type"] = 'draftMessage',
+      reply_to_message_id = reply_to_message_id,
       input_message_text = {
-        _ = 'inputMessageText',
-        text = tostring(teks),
-        disable_web_page_preview = disablewebpagepreview,
-        clear_draft = cleardraft,
-        entities = entity, -- vector<textEntity>
-        parse_mode = getParseMode(parsemode)
-      },
-    },
-  }, callback or dl_cb, data))
+        ["@type"] = 'inputMessageText',
+        disable_web_page_preview = disable_web_page_preview,
+        text = {text = text},
+        clear_draft = clear_draft
+      }
+    }
+  }
+  if parse_mode then
+    parseTextEntities(text, parse_mode, function(a, d)
+      a.tdbody.draft_message.input_message_text.text = d
+      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
+    end, {tdbody = tdbody})
+  else
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
+  end
 end
 
--- Changes chat pinned state.
--- You can pin up to getOption('pinned_chat_count_max') non-secret chats and the same number of secret chats
+-- Changes the pinned state of a chat.
+-- You can pin up to GetOption("pinned_chat_count_max") non-secret chats and the same number of secret chats
 -- @chat_id Chat identifier
 -- @is_pinned New value of is_pinned
-function tdbot.toggleChatIsPinned(chatid, ispinned, callback, data)
+function tdbot.toggleChatIsPinned(chat_id, is_pinned, callback, data)
   assert (tdbot_function ({
-    _ = 'toggleChatIsPinned',
-    chat_id = chatid,
-    is_pinned = ispinned
+    ["@type"] = 'toggleChatIsPinned',
+    chat_id = chat_id,
+    is_pinned = is_pinned
   }, callback or dl_cb, data))
 end
 
 -- Changes client data associated with a chat
 -- @chat_id Chat identifier
 -- @client_data New value of client_data
-function tdbot.setChatClientData(chatid, clientdata, callback, data)
+function tdbot.setChatClientData(chat_id, client_data, callback, data)
   assert (tdbot_function ({
-    _ = 'setChatClientData',
-    chat_id = chatid,
-    client_data = tostring(clientdata)
+    ["@type"] = 'setChatClientData',
+    chat_id = chat_id,
+    client_data = tostring(client_data)
   }, callback or dl_cb, data))
 end
 
--- Adds new member to chat.
+-- Adds a new member to a chat.
 -- Members can't be added to private or secret chats.
--- Member will not be added until chat state will be synchronized with the server
+-- Members will not be added until the chat state has been synchronized with the server
 -- @chat_id Chat identifier
--- @user_id Identifier of the user to add
--- @forward_limit Number of previous messages from chat to forward to new member, ignored for channel chats. Can't be greater than 300
-function tdbot.addChatMember(chatid, userid, forwardlimit, callback, data)
+-- @user_id Identifier of the user
+-- @forward_limit The number of earlier messages from the chat to be forwarded to the new member; up to 300.
+-- Ignored for supergroups and channels
+function tdbot.addChatMember(chat_id, user_id, forward_limit, callback, data)
   assert (tdbot_function ({
-    _ = 'addChatMember',
-    chat_id = chatid,
-    user_id = userid,
-    forward_limit = forwardlimit
+    ["@type"] = 'addChatMember',
+    chat_id = chat_id,
+    user_id = user_id,
+    forward_limit = setLimit(300, forward_limit)
   }, callback or dl_cb, data))
 end
 
--- Adds many new members to the chat.
--- Currently, available only for channels.
--- Can't be used to join the channel.
--- Members can't be added to broadcast channel if it has more than 200 members.
--- Members will not be added until chat state will be synchronized with the server
+-- Adds multiple new members to a chat.
+-- Currently this option is only available for supergroups and channels.
+-- This option can't be used to join a chat.
+-- Members can't be added to a channel if it has more than 200 members.
+-- Members will not be added until the chat state has been synchronized with the server
 -- @chat_id Chat identifier
--- @user_ids Identifiers of the users to add -- vector<int32>
-function tdbot.addChatMembers(chatid, userids, callback, data)
+-- @user_ids Identifiers of the users to be added to the chat
+function tdbot.addChatMembers(chat_id, user_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'addChatMembers',
-    chat_id = chatid,
-    user_ids = getVector(userids),
+    ["@type"] = 'addChatMembers',
+    chat_id = chat_id,
+    user_ids = vectorize(user_ids)
   }, callback or dl_cb, data))
 end
 
--- Changes status of the chat member, need appropriate privileges.
--- This function is currently not suitable for adding new members to the chat, use addChatMember instead.
--- Status will not be changed until chat state will be synchronized with the server
+-- Changes the status of a chat member, needs appropriate privileges.
+-- This function is currently not suitable for adding new members to the chat; instead, use addChatMember.
+-- The chat member status will not be changed until it has been synchronized with the server
 -- @chat_id Chat identifier
--- @user_id Identifier of the user to edit status
--- @status New status of the member in the chat
--- rank = Creator | Administrator | Member | Restricted | Left | Banned
-function tdbot.changeChatMemberStatus(chatid, userid, rank, right, callback, data)
+-- @user_id User identifier
+-- @status The new status of the member in the chat
+function tdbot.setChatMemberStatus(chat_id, user_id, status, right, callback, data)
   local chat_member_status = {}
-
--- User is a chat member with some additional priviledges.
--- In groups, administrators can edit and delete other messages, add new members and ban unpriviledged members
--- @can_be_edited True, if current user has rights to edit administrator privileges of that user
--- @can_change_info True, if the administrator can change chat title, photo and other settings
--- @can_post_messages True, if the administrator can create channel posts, broadcast channels only
--- @can_edit_messages True, if the administrator can edit messages of other users, broadcast channels only
--- @can_delete_messages True, if the administrator can delete messages of other users
--- @can_invite_users True, if the administrator can invite new users to the chat
--- @can_restrict_members True, if the administrator can restrict, ban or unban chat members
--- @can_pin_messages True, if the administrator can pin messages, supergroup channels only
--- @can_promote_members True, if the administrator can add new administrators with a subset of his own privileges or demote administrators directly or indirectly promoted by him
-  if rank == 'Administrator' then
+  local right = right and vectorize(right) or {}
+  if status == 'Creator' then
     chat_member_status = {
-      can_be_edited = right[1] or 1,
-      can_change_info = right[2] or 1,
-      can_post_messages = right[3] or 1,
-      can_edit_messages = right[4] or 1,
-      can_delete_messages = right[5] or 1,
-      can_invite_users = right[6] or 1,
-      can_restrict_members = right[7] or 1,
-      can_pin_messages = right[8] or 1,
-      can_promote_members = right[9] or 1
+      is_member = right[0] or 1
     }
--- User has some additional restrictions in the chat.
--- Unsupported in group chats and broadcast channels
--- @is_member True, if user is chat member
--- @restricted_until_date Date when the user will be unrestricted, 0 if never. Unix time.
--- If user is restricted for more than 366 days or less than 30 seconds from the current time it considered to be restricted forever
--- @can_send_messages True, if the user can send text messages, contacts, locations and venues
--- @can_send_media_messages True, if the user can send audios, documents, photos, videos, video notes and voice notes, implies can_send_messages
--- @can_send_other_messages True, if the user can send animations, games, stickers and use inline bots, implies can_send_media_messages
--- @can_add_web_page_previews True, if user may add web page preview to his messages, implies can_send_messages
-  elseif rank == 'Restricted' then
+  elseif status == 'Administrator' then
     chat_member_status = {
-      is_member = right[1] or 1,
-      restricted_until_date = right[2] or 0,
-      can_send_messages = right[3] or 1,
-      can_send_media_messages = right[4] or 1,
-      can_send_other_messages = right[5] or 1,
-      can_add_web_page_previews = right[6] or 1
+      can_be_edited = right[0] or 1,
+      can_change_info = right[1] or 1,
+      can_post_messages = right[2] or 1,
+      can_edit_messages = right[3] or 1,
+      can_delete_messages = right[4] or 1,
+      can_invite_users = right[5] or 1,
+      can_restrict_members = right[6] or 1,
+      can_pin_messages = right[7] or 1,
+      can_promote_members = right[8] or 0
     }
--- User was banned (and obviously is not a chat member) and can't return to the chat or view messages
--- @banned_until_date Date when the user will be unbanned, 0 if never. Unix time.
--- If user is banned for more than 366 days or less than 30 seconds from the current time it considered to be banned forever
-  elseif rank == 'Banned' then
+  elseif status == 'Restricted' then
     chat_member_status = {
-      banned_until_date = right[1] or 0
+      is_member = right[0] or 1,
+      restricted_until_date = right[1] or 0,
+      can_send_messages = right[2] or 1,
+      can_send_media_messages = right[3] or 1,
+      can_send_other_messages = right[4] or 1,
+      can_add_web_page_previews = right[5] or 1
+    }
+  elseif status == 'Banned' then
+    chat_member_status = {
+      banned_until_date = right[0] or 0
     }
   end
-
-  chat_member_status._ = 'chatMemberStatus' .. rank
-
+  chat_member_status["@type"] = 'chatMemberStatus' .. status
   assert (tdbot_function ({
-    _ = 'changeChatMemberStatus',
-    chat_id = chatid,
-    user_id = userid,
+    ["@type"] = 'setChatMemberStatus',
+    chat_id = chat_id,
+    user_id = user_id,
     status = chat_member_status
   }, callback or dl_cb, data))
 end
 
--- Returns information about one participant of the chat
+-- Returns information about a single member of a chat
 -- @chat_id Chat identifier
 -- @user_id User identifier
-function tdbot.getChatMember(chatid, userid, callback, data)
+function tdbot.getChatMember(chat_id, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChatMember',
-    chat_id = chatid,
-    user_id = userid
+    ["@type"] = 'getChatMember',
+    chat_id = chat_id,
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
--- Searches for the specified query in the first name, last name and username among members of the specified chat.
--- Requires administrator rights in broadcast channels
+-- Searches for a specified query in the first name, last name and username of the members of a specified chat.
+-- Requires administrator rights in channels
 -- @chat_id Chat identifier
 -- @query Query to search for
--- @limit Maximum number of users to be returned
-function tdbot.searchChatMembers(chatid, query, lim, callback, data)
+-- @limit The maximum number of users to be returned
+function tdbot.searchChatMembers(chat_id, query, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchChatMembers',
-    chat_id = chatid,
+    ["@type"] = 'searchChatMembers',
+    chat_id = chat_id,
     query = tostring(query),
-    limit = lim
+    limit = limit
   }, callback or dl_cb, data))
 end
 
--- Changes list or order of pinned chats
--- @chat_ids New list of pinned chats -- vector<int53>
-function tdbot.setPinnedChats(chatids, callback, data)
+-- Returns a list of users who are administrators of the chat
+-- @chat_id Chat identifier
+function tdbot.getChatAdministrators(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'setPinnedChats',
-    chat_ids = getVector(chatids)
+    ["@type"] = 'getChatAdministrators',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
--- Asynchronously downloads file from cloud.
--- Updates updateFile will notify about download progress and successful download
--- @file_id Identifier of file to download
--- @priority Priority of download, 1-32. The higher priority, the earlier file will be downloaded.
--- If priorities of two files are equal then the last one for which downloadFile is called will be downloaded first
-function tdbot.downloadFile(fileid, priorities, callback, data)
+-- Changes the order of pinned chats
+-- @chat_ids The new list of pinned chats
+function tdbot.setPinnedChats(chat_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'downloadFile',
-    file_id = fileid,
-    priority = priorities
+    ["@type"] = 'setPinnedChats',
+    chat_ids = vectorize(chat_ids)
   }, callback or dl_cb, data))
 end
 
--- Stops file downloading.
--- If file is already downloaded, does nothing
--- @file_id Identifier of file to cancel download
-function tdbot.cancelDownloadFile(fileid, callback, data)
+-- Asynchronously downloads a file from the cloud.
+-- updateFile will be used to notify about the download progress and successful completion of the download.
+-- Returns file state just after the download has been started
+-- @file_id Identifier of the file to download
+-- @priority Priority of the download (1-32).
+-- The higher the priority, the earlier the file will be downloaded.
+-- If the priorities of two files are equal, then the last one for which downloadFile was called will be downloaded first
+function tdbot.downloadFile(file_id, priority, callback, data)
   assert (tdbot_function ({
-    _ = 'cancelDownloadFile',
-    file_id = fileid
+    ["@type"] = 'downloadFile',
+    file_id = file_id,
+    priority = priority or 32
   }, callback or dl_cb, data))
 end
 
--- Asynchronously uploads file to the cloud without sending it in a message.
--- Updates updateFile will notify about upload progress and successful upload.
--- The file will not have persistent identifier until it will be sent in a message
+-- Stops the downloading of a file.
+-- If a file has already been downloaded, does nothing
+-- @file_id Identifier of a file to stop downloading
+-- @only_if_pending Pass true to stop downloading only if it hasn't been started, i.e.
+-- request hasn't been sent to server
+function tdbot.cancelDownloadFile(file_id, only_if_pending, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'cancelDownloadFile',
+    file_id = file_id,
+    only_if_pending = only_if_pending
+  }, callback or dl_cb, data))
+end
+
+-- Asynchronously uploads a file to the cloud without sending it in a message.
+-- updateFile will be used to notify about upload progress and successful completion of the upload.
+-- The file will not have a persistent remote identifier until it will be sent in a message
 -- @file File to upload
 -- @file_type File type
--- @priority Priority of upload, 1-32. The higher priority, the earlier file will be uploaded.
--- If priorities of two files are equal then the first one for which uploadFile is called will be uploaded first
----
--- fileType Represents type of a file
--- fileType: None | Animation | Audio | Document | Photo | ProfilePhoto | Secret | Sticker | Thumb | Unknown | Video | VideoNote | Voice | Wallpaper | SecretThumb
-function tdbot.uploadFile(filetoupload, filetype, prior, callback, data)
+-- @priority Priority of the upload (1-32).
+-- The higher the priority, the earlier the file will be uploaded.
+-- If the priorities of two files are equal, then the first one for which uploadFile was called will be uploaded first
+-- fileType: None|Animation|Audio|Document|Photo|ProfilePhoto|Secret|Sticker|Thumbnail|Unknown|Video|VideoNote|VoiceNote|Wallpaper|SecretThumbnail
+function tdbot.uploadFile(file, file_type, priority, callback, data)
   assert (tdbot_function ({
-    _ = 'uploadFile',
-    file = getInputFile(filetoupload),
+    ["@type"] = 'uploadFile',
+    file = getInputFile(file),
     file_type = {
-      _ = 'fileType' .. filetype,
+      ["@type"] = 'fileType' .. file_type
     },
-    priority = prior
+    priority = priority or 32
   }, callback or dl_cb, data))
 end
 
--- Stops file uploading.
--- Works only for files uploaded using uploadFile.
+-- Stops the uploading of a file.
+-- Supported only for files uploaded by using uploadFile.
 -- For other files the behavior is undefined
--- @file_id Identifier of file to cancel upload
-function tdbot.cancelUploadFile(fileid, callback, data)
+-- @file_id Identifier of the file to stop uploading
+function tdbot.cancelUploadFile(file_id, callback, data)
   assert (tdbot_function ({
-    _ = 'cancelUploadFile',
-    file_id = fileid
+    ["@type"] = 'cancelUploadFile',
+    file_id = file_id
   }, callback or dl_cb, data))
 end
 
--- Next part of a file was generated
--- @generation_id Identifier of the generation process
--- @size Full size of file in bytes, 0 if unknown.
--- @local_size Number of bytes already generated. Negative number means that generation has failed and should be terminated
-function tdbot.setFileGenerationProgress(generationid, size, localsize, callback, data)
+-- The next part of a file was generated
+-- @generation_id The identifier of the generation process
+-- @expected_size Expected size of the generated file, in bytes; 0 if unknown
+-- @local_prefix_size The number of bytes already generated
+function tdbot.setFileGenerationProgress(generation_id, expected_size, local_prefix_size, callback, data)
   assert (tdbot_function ({
-    _ = 'setFileGenerationProgress',
-    generation_id = generationid,
-    size = size,
-    local_size = localsize
+    ["@type"] = 'setFileGenerationProgress',
+    generation_id = generation_id,
+    expected_size = expected_size or 0,
+    local_prefix_size = local_prefix_size
   }, callback or dl_cb, data))
 end
 
--- Finishes file generation
--- @generation_id Identifier of the generation process
-function tdbot.finishFileGeneration(generationid, callback, data)
+-- Finishes the file generation
+-- @generation_id The identifier of the generation process
+-- @error If set, means that file generation has failed and should be terminated
+function tdbot.finishFileGeneration(generation_id, error, callback, data)
   assert (tdbot_function ({
-    _ = 'finishFileGeneration',
-    generation_id = generationid
+    ["@type"] = 'finishFileGeneration',
+    generation_id = generation_id,
+    error = error
   }, callback or dl_cb, data))
 end
 
--- Deletes a file from TDLib file cache
+-- Deletes a file from the TDLib file cache
 -- @file_id Identifier of the file to delete
-function tdbot.deleteFile(fileid, callback, data)
+function tdbot.deleteFile(file_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteFile',
-    file_id = fileid
+    ["@type"] = 'deleteFile',
+    file_id = file_id
   }, callback or dl_cb, data))
 end
 
--- Generates new chat invite link, previously generated link is revoked.
--- Available for group and channel chats.
--- In groups can be called only by creator, in channels requires appropriate rights
+-- Generates a new invite link for a chat; the previously generated link is revoked.
+-- Available for basic groups, supergroups, and channels.
+-- In basic groups this can be called only by the group's creator; in supergroups and channels this requires appropriate administrator rights
 -- @chat_id Chat identifier
-function tdbot.exportChatInviteLink(chatid, callback, data)
+function tdbot.generateChatInviteLink(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'exportChatInviteLink',
-    chat_id = chatid
+    ["@type"] = 'generateChatInviteLink',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
--- Checks chat invite link for validness and returns information about the corresponding chat
--- @invite_link Invite link to check.
--- Should begin with 'https://t.me/joinchat/', 'https://telegram.me/joinchat/' or 'https://telegram.dog/joinchat/'
-function tdbot.checkChatInviteLink(invitelink, callback, data)
+-- Checks the validity of an invite link for a chat and returns information about the corresponding chat
+-- @invite_link Invite link to be checked; should begin with "https://t.me/joinchat/", "https://telegram.me/joinchat/", or "https://telegram.dog/joinchat/"
+function tdbot.checkChatInviteLink(invite_link, callback, data)
   assert (tdbot_function ({
-    _ = 'checkChatInviteLink',
-    invite_link = tostring(invitelink)
+    ["@type"] = 'checkChatInviteLink',
+    invite_link = tostring(invite_link)
   }, callback or dl_cb, data))
 end
 
--- Imports chat invite link, adds current user to a chat if possible.
--- Member will not be added until chat state will be synchronized with the server
--- @invite_link Invite link to import. Should begin with "https://t.me/joinchat/", "https://telegram.me/joinchat/" or "https://telegram.dog/joinchat/"
-function tdbot.importChatInviteLink(invitelink, callback, data)
+-- Uses an invite link to add the current user to the chat if possible.
+-- The new member will not be added until the chat state has been synchronized with the server
+-- @invite_link Invite link to import; should begin with "https://t.me/joinchat/", "https://telegram.me/joinchat/", or "https://telegram.dog/joinchat/"
+function tdbot.joinChatByInviteLink(invite_link, callback, data)
   assert (tdbot_function ({
-    _ = 'importChatInviteLink',
-    invite_link = tostring(invitelink)
+    ["@type"] = 'joinChatByInviteLink',
+    invite_link = tostring(invite_link)
   }, callback or dl_cb, data))
 end
 
--- Creates new call
--- @user_id Identifier of user to call
--- @protocol Description of supported by the client call protocols
----
--- callProtocol Specifies supported call protocols
--- @udp_p2p True, if UDP peer to peer connections are supported
--- @udp_reflector True, if connection through UDP reflectors are supported
--- @min_layer Minimum supported layer, use 65
--- @max_layer Maximum supported layer, use 65
-function tdbot.createCall(userid, udpp2p, udpreflector, minlayer, maxlayer, callback, data)
+-- Creates a new call
+-- @user_id Identifier of the user to be called
+-- @protocol Description of the call protocols supported by the client
+function tdbot.createCall(user_id, udp_p2p, udp_reflector, min_layer, max_layer, callback, data)
   assert (tdbot_function ({
-    _ = 'createCall',
-    user_id = userid,
+    ["@type"] = 'createCall',
+    user_id = user_id,
     protocol = {
-      _ = 'callProtocol',
-      udp_p2p = udpp2p,
-      udp_reflector = udpreflector,
-      min_layer = minlayer,
-      max_layer = maxlayer or 65
-    },
+      ["@type"] = 'callProtocol',
+      udp_p2p = udp_p2p,
+      udp_reflector = udp_reflector,
+      min_layer = min_layer or 65,
+      max_layer = max_layer or 65
+    }
   }, callback or dl_cb, data))
 end
 
--- Accepts incoming call
+-- Accepts an incoming call
 -- @call_id Call identifier
--- @protocol Specifies supported call protocols
--- @udp_p2p True, if UDP peer to peer connections are supported
--- @udp_reflector True, if connection through UDP reflectors are supported
--- @min_layer Minimum supported layer, use 65
--- @max_layer Maximum supported layer, use 65
-function tdbot.acceptCall(callid, udpp2p, udpreflector, minlayer, maxlayer, callback, data)
+-- @protocol Description of the call protocols supported by the client
+-- @udp_p2p True, if UDP peer-to-peer connections are supported
+-- @udp_reflector True, if connection through UDP reflectors is supported
+-- @min_layer Minimum supported API layer; use 65
+-- @max_layer Maximum supported API layer; use 65
+function tdbot.acceptCall(call_id, udp_p2p, udp_reflector, callback, data)
   assert (tdbot_function ({
-    _ = 'acceptCall',
-    call_id = callid,
+    ["@type"] = 'acceptCall',
+    call_id = call_id,
     protocol = {
-      _ = 'callProtocol',
-      udp_p2p = udpp2p,
-      udp_reflector = udpreflector,
-      min_layer = minlayer,
-      max_layer = maxlayer
-    },
+      ["@type"] = 'callProtocol',
+      udp_p2p = udp_p2p,
+      udp_reflector = udp_reflector,
+      min_layer = 65,
+      max_layer = 65
+    }
   }, callback or dl_cb, data))
 end
 
 -- Discards a call
 -- @call_id Call identifier
--- @is_disconnected True, if users was disconnected
--- @duration Call duration in seconds
--- @connection_id Identifier of a connection used during the call
-function tdbot.discardCall(callid, isdisconnected, callduration, connectionid, callback, data)
+-- @is_disconnected True, if the user was disconnected
+-- @duration The call duration, in seconds
+-- @connection_id Identifier of the connection used during the call
+function tdbot.discardCall(call_id, is_disconnected, duration, connection_id, callback, data)
   assert (tdbot_function ({
-    _ = 'discardCall',
-    call_id = callid,
-    is_disconnected = isdisconnected,
-    duration = callduration,
-    connection_id = connectionid
+    ["@type"] = 'discardCall',
+    call_id = call_id,
+    is_disconnected = is_disconnected,
+    duration = duration,
+    connection_id = connection_id
   }, callback or dl_cb, data))
 end
 
--- Sends call rating
+-- Sends a call rating
 -- @call_id Call identifier
--- @rating Call rating, 1-5
--- @comment Optional user comment if rating is less than 5
-function tdbot.rateCall(callid, rating, usercomment, callback, data)
+-- @rating Call rating; 1-5
+-- @comment An optional user comment if the rating is less than 5
+function tdbot.sendCallRating(call_id, rating, comment, callback, data)
   assert (tdbot_function ({
-    _ = 'rateCall',
-    call_id = callid,
+    ["@type"] = 'sendCallRating',
+    call_id = call_id,
     rating = rating,
-    comment = tostring(usercomment)
+    comment = tostring(comment)
   }, callback or dl_cb, data))
 end
 
--- Sends call debug information
+-- Sends debug information for a call
 -- @call_id Call identifier
--- @debug Debug information in application specific format
-function tdbot.debugCall(callid, debg, callback, data)
+-- @debug_information Debug information in application-specific format
+function tdbot.sendCallDebugInformation(call_id, debug_information, callback, data)
   assert (tdbot_function ({
-    _ = 'debugCall',
-    call_id = callid,
-    debug = tostring(debg)
+    ["@type"] = 'sendCallDebugInformation',
+    call_id = call_id,
+    debug_information = tostring(debug_information)
   }, callback or dl_cb, data))
 end
 
--- Adds user to black list
+-- Adds a user to the blacklist
 -- @user_id User identifier
-function tdbot.blockUser(userid, callback, data)
+function tdbot.blockUser(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'blockUser',
-    user_id = userid
+    ["@type"] = 'blockUser',
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
--- Removes user from black list
+-- Removes a user from the blacklist
 -- @user_id User identifier
-function tdbot.unblockUser(userid, callback, data)
+function tdbot.unblockUser(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'unblockUser',
-    user_id = userid
+    ["@type"] = 'unblockUser',
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
--- Returns users blocked by the current user
--- @offset Number of users to skip in result, must be non-negative
--- @limit Maximum number of users to return, can't be greater than 100
-function tdbot.getBlockedUsers(off, lim, callback, data)
+-- Returns users that were blocked by the current user
+-- @offset Number of users to skip in the result; must be non-negative
+-- @limit Maximum number of users to return; up to 100
+function tdbot.getBlockedUsers(offset, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getBlockedUsers',
-    offset = off,
-    limit = lim
+    ["@type"] = 'getBlockedUsers',
+    offset = offset or 0,
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
--- Adds new contacts/edits existing contacts, contacts user identifiers are ignored
--- @contacts List of contacts to import/edit -- vector<contact>
--- @phone_number User's phone number
--- @first_name User first name, 1-255 characters
--- @last_name User last name
--- @user_id User identifier if known, 0 otherwise
-function tdbot.importContacts(phonenumber, firstname, lastname, userid, callback, data)
+-- Adds new contacts or edits existing contacts; contacts' user identifiers are ignored
+-- @contacts The list of contacts to import or edit
+function tdbot.importContacts(phone_number, first_name, last_name, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'importContacts',
+    ["@type"] = 'importContacts',
     contacts = {
-      [0] = {
-        _ = 'contact',
-        phone_number_ = tostring(phonenumber),
-        first_name_ = tostring(firstname),
-        last_name_ = tostring(lastname),
-        user_id_ = userid
-      }
-    },
+      ["@type"] = 'contact',
+      phone_number = tostring(phone_number),
+      first_name = tostring(first_name),
+      last_name = tostring(last_name),
+      user_id = user_id or 0
+    }
   }, callback or dl_cb, data))
 end
 
--- Searches for specified query in the first name, last name and username of the known user contacts
--- @query Query to search for, can be empty to return all contacts
+-- Searches for the specified query in the first names, last names and usernames of the known user contacts
+-- @query Query to search for; can be empty to return all contacts
 -- @limit Maximum number of users to be returned
-function tdbot.searchContacts(que, lim, callback, data)
+function tdbot.searchContacts(query, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchContacts',
-    query = tostring(que),
-    limit = lim
+    ["@type"] = 'searchContacts',
+    query = tostring(query),
+    limit = limit
   }, callback or dl_cb, data))
 end
 
--- Deletes users from contacts list
--- @user_ids Identifiers of users to be deleted -- vector<int32>
-function tdbot.deleteContacts(userids, callback, data)
+-- Removes users from the contacts list
+-- @user_ids Identifiers of users to be deleted
+function tdbot.removeContacts(user_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteContacts',
-    user_ids = getVector(userids),
+    ["@type"] = 'removeContacts',
+    user_ids = vectorize(user_ids)
   }, callback or dl_cb, data))
 end
 
--- Returns total number of imported contacts
+-- Returns the total number of imported contacts
 function tdbot.getImportedContactCount(callback, data)
   assert (tdbot_function ({
-    _ = 'getImportedContactCount'
+    ["@type"] = 'getImportedContactCount'
   }, callback or dl_cb, data))
 end
 
--- Deletes all imported contacts
-function tdbot.deleteImportedContacts(callback, data)
+-- Changes imported contacts using the list of current user contacts saved on the device.
+-- Imports newly added contacts and, if at least the file database is enabled, deletes recently deleted contacts.
+-- Query result depends on the result of the previous query, so only one query is possible at the same time
+-- @contacts The new list of contacts
+function tdbot.changeImportedContacts(phone_number, first_name, last_name, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteImportedContacts'
+    ["@type"] = 'changeImportedContacts',
+    contacts = {
+      ["@type"] = 'contact',
+      phone_number = tostring(phone_number),
+      first_name = tostring(first_name),
+      last_name = tostring(last_name),
+      user_id = user_id or 0
+    }
   }, callback or dl_cb, data))
 end
 
--- Returns profile photos of the user.
--- Result of this query may be outdated: some photos may be already deleted
+-- Clears all imported contacts
+function tdbot.clearImportedContacts(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'clearImportedContacts'
+  }, callback or dl_cb, data))
+end
+
+-- Returns the profile photos of a user.
+-- The result of this query may be outdated: some photos might have been deleted already
 -- @user_id User identifier
--- @offset Photos to skip, must be non-negative
--- @limit Maximum number of photos to be returned, can't be greater than 100
-function tdbot.getUserProfilePhotos(userid, off, lim, callback, data)
+-- @offset The number of photos to skip; must be non-negative
+-- @limit Maximum number of photos to be returned; up to 100
+function tdbot.getUserProfilePhotos(user_id, offset, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getUserProfilePhotos',
-    user_id = userid,
-    offset = off,
-    limit = lim
+    ["@type"] = 'getUserProfilePhotos',
+    user_id = user_id,
+    offset = offset or 0,
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
--- Returns stickers from installed ordinary sticker sets corresponding to the given emoji.
--- If emoji is not empty, elso favorite and recently used stickers may be returned
--- @emoji String representation of emoji. If empty, returns all known stickers
--- @limit Maximum number of stickers to return
-function tdbot.getStickers(emo, lim, callback, data)
+-- Returns stickers from the installed sticker sets that correspond to a given emoji.
+-- If the emoji is not empty, favorite and recently used stickers may also be returned
+-- @emoji String representation of emoji.
+-- If empty, returns all known installed stickers
+-- @limit Maximum number of stickers to be returned
+function tdbot.getStickers(emoji, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getStickers',
-    emoji = tostring(emo),
-    limit = lim
+    ["@type"] = 'getStickers',
+    emoji = tostring(emoji),
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
--- Returns list of installed sticker sets
--- @is_masks Pass true to return mask sticker sets, pass false to return ordinary sticker sets
-function tdbot.getInstalledStickerSets(ismasks, callback, data)
+-- Searches for stickers from public sticker sets that correspond to a given emoji
+-- @emoji String representation of emoji; must be non-empty
+-- @limit Maximum number of stickers to be returned
+function tdbot.searchStickers(emoji, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getInstalledStickerSets',
-    is_masks = ismasks
+    ["@type"] = 'searchStickers',
+    emoji = tostring(emoji),
+    limit = limit
   }, callback or dl_cb, data))
 end
 
--- Returns list of archived sticker sets
--- @is_masks Pass true to return mask stickers sets, pass false to return ordinary sticker sets
--- @offset_sticker_set_id Identifier of the sticker set from which return the result
+-- Returns a list of installed sticker sets
+-- @is_masks Pass true to return mask sticker sets; pass false to return ordinary sticker sets
+function tdbot.getInstalledStickerSets(is_masks, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getInstalledStickerSets',
+    is_masks = is_masks
+  }, callback or dl_cb, data))
+end
+
+-- Returns a list of archived sticker sets
+-- @is_masks Pass true to return mask stickers sets; pass false to return ordinary sticker sets
+-- @offset_sticker_set_id Identifier of the sticker set from which to return the result
 -- @limit Maximum number of sticker sets to return
-function tdbot.getArchivedStickerSets(ismasks, offsetstickersetid, lim, callback, data)
+function tdbot.getArchivedStickerSets(is_masks, offset_sticker_set_id, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getArchivedStickerSets',
-    is_masks = ismasks,
-    offset_sticker_set_id = offsetstickersetid,
-    limit = lim
+    ["@type"] = 'getArchivedStickerSets',
+    is_masks = is_masks,
+    offset_sticker_set_id = offset_sticker_set_id,
+    limit = limit
   }, callback or dl_cb, data))
 end
 
--- Returns list of trending sticker sets
+-- Returns a list of trending sticker sets
 function tdbot.getTrendingStickerSets(callback, data)
   assert (tdbot_function ({
-    _ = 'getTrendingStickerSets'
+    ["@type"] = 'getTrendingStickerSets'
   }, callback or dl_cb, data))
 end
 
--- Returns list of sticker sets attached to a file, currently only photos and videos can have attached sticker sets
+-- Returns a list of sticker sets attached to a file.
+-- Currently only photos and videos can have attached sticker sets
 -- @file_id File identifier
-function tdbot.getAttachedStickerSets(fileid, callback, data)
+function tdbot.getAttachedStickerSets(file_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getAttachedStickerSets',
-    file_id = fileid
+    ["@type"] = 'getAttachedStickerSets',
+    file_id = file_id
   }, callback or dl_cb, data))
 end
 
--- Returns information about sticker set by its identifier
+-- Returns information about a sticker set by its identifier
 -- @set_id Identifier of the sticker set
-function tdbot.getStickerSet(setid, callback, data)
+function tdbot.getStickerSet(set_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getStickerSet',
-    set_id = setid
+    ["@type"] = 'getStickerSet',
+    set_id = set_id
   }, callback or dl_cb, data))
 end
 
--- Searches sticker set by its short name
+-- Searches for a sticker set by its name
 -- @name Name of the sticker set
-function tdbot.searchStickerSet(sticker_name, callback, data)
+function tdbot.searchStickerSet(name, callback, data)
   assert (tdbot_function ({
-    _ = 'searchStickerSet',
-    name = tostring(sticker_name)
+    ["@type"] = 'searchStickerSet',
+    name = tostring(name)
   }, callback or dl_cb, data))
 end
 
--- Installs/uninstalls or enables/archives sticker set
+-- Searches for installed sticker sets by looking for specified query in their title and name
+-- @is_masks Pass true to return mask sticker sets; pass false to return ordinary sticker sets
+-- @query Query to search for
+-- @limit Maximum number of sticker sets to return
+function tdbot.searchInstalledStickerSets(is_masks, query, limit, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'searchInstalledStickerSets',
+    is_masks = is_masks,
+    query = tostring(query),
+    limit = limit
+  }, callback or dl_cb, data))
+end
+
+-- Searches for ordinary sticker sets by looking for specified query in their title and name.
+-- Excludes installed sticker sets from the results
+-- @query Query to search for
+function tdbot.searchStickerSets(query, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'searchStickerSets',
+    query = tostring(query)
+  }, callback or dl_cb, data))
+end
+
+-- Installs/uninstalls or activates/archives a sticker set
 -- @set_id Identifier of the sticker set
--- @is_installed New value of is_installed
--- @is_archived New value of is_archived.
+-- @is_installed The new value of is_installed
+-- @is_archived The new value of is_archived.
 -- A sticker set can't be installed and archived simultaneously
-function tdbot.changeStickerSet(setid, isinstalled, isarchived, callback, data)
+function tdbot.changeStickerSet(set_id, is_installed, is_archived, callback, data)
   assert (tdbot_function ({
-    _ = 'changeStickerSet',
-    set_id = setid,
-    is_installed = isinstalled,
-    is_archived = isarchived
+    ["@type"] = 'changeStickerSet',
+    set_id = set_id,
+    is_installed = is_installed,
+    is_archived = is_archived
   }, callback or dl_cb, data))
 end
 
--- Informs that some trending sticker sets are viewed by the user
--- @sticker_set_ids Identifiers of viewed trending sticker sets -- vector<int64>
-function tdbot.viewTrendingStickerSets(stickersetids, callback, data)
+-- Informs the server that some trending sticker sets have been viewed by the user
+-- @sticker_set_ids Identifiers of viewed trending sticker sets
+function tdbot.viewTrendingStickerSets(sticker_set_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'viewTrendingStickerSets',
-    sticker_set_ids = getVector(stickersetids)
+    ["@type"] = 'viewTrendingStickerSets',
+    sticker_set_ids = vectorize(sticker_set_ids)
   }, callback or dl_cb, data))
 end
 
 -- Changes the order of installed sticker sets
--- @is_masks Pass true to change mask sticker sets order, pass false to change ordinary sticker sets order
--- @sticker_set_ids Identifiers of installed sticker sets in the new right order -- vector<int64>
-function tdbot.reorderInstalledStickerSets(ismasks, stickersetids, callback, data)
+-- @is_masks Pass true to change the order of mask sticker sets; pass false to change the order of ordinary sticker sets
+-- @sticker_set_ids Identifiers of installed sticker sets in the new correct order
+function tdbot.reorderInstalledStickerSets(is_masks, sticker_set_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'reorderInstalledStickerSets',
-    is_masks = ismasks,
-    sticker_set_ids = getVector(stickersetids)
+    ["@type"] = 'reorderInstalledStickerSets',
+    is_masks = is_masks,
+    sticker_set_ids = vectorize(sticker_set_ids)
   }, callback or dl_cb, data))
 end
 
--- Returns list of recently used stickers
--- @is_attached Pass true to return stickers and masks recently attached to photo or video files, pass false to return recently sent stickers
-function tdbot.getRecentStickers(isattached, callback, data)
+-- Returns a list of recently used stickers
+-- @is_attached Pass true to return stickers and masks that were recently attached to photos or video files; pass false to return recently sent stickers
+function tdbot.getRecentStickers(is_attached, callback, data)
   assert (tdbot_function ({
-    _ = 'getRecentStickers',
-    is_attached = isattached
+    ["@type"] = 'getRecentStickers',
+    is_attached = is_attached
   }, callback or dl_cb, data))
 end
 
--- Manually adds new sticker to the list of recently used stickers.
--- New sticker is added to the beginning of the list.
--- If the sticker is already in the list, at first it is removed from the list.
--- Only stickers belonging to a sticker set can be added to the list
--- @is_attached Pass true to add the sticker to the list of stickers recently attached to photo or video files, pass false to add the sticker to the list of recently sent stickers
+-- Manually adds a new sticker to the list of recently used stickers.
+-- The new sticker is added to the top of the list.
+-- If the sticker was already in the list, it is removed from the list first.
+-- Only stickers belonging to a sticker set can be added to this list
+-- @is_attached Pass true to add the sticker to the list of stickers recently attached to photo or video files; pass false to add the sticker to the list of recently sent stickers
 -- @sticker Sticker file to add
-function tdbot.addRecentSticker(isattached, sticker_path, callback, data)
+function tdbot.addRecentSticker(is_attached, sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'addRecentSticker',
-    is_attached = isattached,
-    sticker = getInputFile(sticker_path)
+    ["@type"] = 'addRecentSticker',
+    is_attached = is_attached,
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
 -- Removes a sticker from the list of recently used stickers
--- @is_attached Pass true to remove the sticker from the list of stickers recently attached to photo or video files, pass false to remove the sticker from the list of recently sent stickers
+-- @is_attached Pass true to remove the sticker from the list of stickers recently attached to photo or video files; pass false to remove the sticker from the list of recently sent stickers
 -- @sticker Sticker file to delete
-function tdbot.deleteRecentSticker(isattached, sticker_path, callback, data)
+function tdbot.removeRecentSticker(is_attached, sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteRecentSticker',
-    is_attached = isattached,
-    sticker = getInputFile(sticker_path)
+    ["@type"] = 'removeRecentSticker',
+    is_attached = is_attached,
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
--- Clears list of recently used stickers
--- @is_attached Pass true to clear list of stickers recently attached to photo or video files, pass false to clear the list of recently sent stickers
-function tdbot.clearRecentStickers(isattached, callback, data)
+-- Clears the list of recently used stickers
+-- @is_attached Pass true to clear the list of stickers recently attached to photo or video files; pass false to clear the list of recently sent stickers
+function tdbot.clearRecentStickers(is_attached, callback, data)
   assert (tdbot_function ({
-    _ = 'clearRecentStickers',
-    is_attached = isattached
+    ["@type"] = 'clearRecentStickers',
+    is_attached = is_attached
   }, callback or dl_cb, data))
 end
 
 -- Returns favorite stickers
 function tdbot.getFavoriteStickers(callback, data)
   assert (tdbot_function ({
-    _ = 'getFavoriteStickers'
+    ["@type"] = 'getFavoriteStickers'
   }, callback or dl_cb, data))
 end
 
--- Adds new sticker to the list of favorite stickers. New sticker is added to the beginning of the list. If the sticker is already in the list, at first it is removed from the list. Only stickers belonging to a sticker set can be added to the list
+-- Adds a new sticker to the list of favorite stickers.
+-- The new sticker is added to the top of the list.
+-- If the sticker was already in the list, it is removed from the list first.
+-- Only stickers belonging to a sticker set can be added to this list
 -- @sticker Sticker file to add
-function tdbot.addFavoriteSticker(sticker_file, callback, data)
+function tdbot.addFavoriteSticker(sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'addFavoriteSticker',
-    sticker = getInputFile(sticker_file)
+    ["@type"] = 'addFavoriteSticker',
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
 -- Removes a sticker from the list of favorite stickers
 -- @sticker Sticker file to delete from the list
-function tdbot.deleteFavoriteSticker(sticker_file, callback, data)
+function tdbot.removeFavoriteSticker(sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteFavoriteSticker',
-    sticker = getInputFile(sticker_file)
+    ["@type"] = 'removeFavoriteSticker',
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
--- Returns emojis corresponding to a sticker
+-- Returns emoji corresponding to a sticker
 -- @sticker Sticker file identifier
-function tdbot.getStickerEmojis(sticker_path, callback, data)
+function tdbot.getStickerEmojis(sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'getStickerEmojis',
-    sticker = getInputFile(sticker_path)
+    ["@type"] = 'getStickerEmojis',
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
 -- Returns saved animations
 function tdbot.getSavedAnimations(callback, data)
   assert (tdbot_function ({
-    _ = 'getSavedAnimations'
+    ["@type"] = 'getSavedAnimations'
   }, callback or dl_cb, data))
 end
 
--- Manually adds new animation to the list of saved animations.
--- New animation is added to the beginning of the list.
--- If the animation is already in the list, at first it is removed from the list.
--- Only non-secret video animations with MIME type 'video/mp4' can be added to the list
--- @animation Animation file to add. Only known to server animations (i.e. successfully sent via message) can be added to the list
-function tdbot.addSavedAnimation(animation_path, callback, data)
+-- Manually adds a new animation to the list of saved animations.
+-- The new animation is added to the beginning of the list.
+-- If the animation was already in the list, it is removed first.
+-- Only non-secret video animations with MIME type "video/mp4" can be added to the list
+-- @animation The animation file to be added.
+-- Only animations known to the server (i.e.
+-- successfully sent via a message) can be added to the list
+function tdbot.addSavedAnimation(animation, callback, data)
   assert (tdbot_function ({
-    _ = 'addSavedAnimation',
-    animation = getInputFile(animation_path)
+    ["@type"] = 'addSavedAnimation',
+    animation = getInputFile(animation)
   }, callback or dl_cb, data))
 end
 
 -- Removes an animation from the list of saved animations
--- @animation Animation file to delete
-function tdbot.deleteSavedAnimation(animation_path, callback, data)
+-- @animation Animation file to be removed
+function tdbot.removeSavedAnimation(animation, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteSavedAnimation',
-    animation = getInputFile(animation_path)
+    ["@type"] = 'removeSavedAnimation',
+    animation = getInputFile(animation)
   }, callback or dl_cb, data))
 end
 
--- Returns up to 20 recently used inline bots in the order of the last usage
+-- Returns up to 20 recently used inline bots in the order of their last usage
 function tdbot.getRecentInlineBots(callback, data)
   assert (tdbot_function ({
-    _ = 'getRecentInlineBots'
+    ["@type"] = 'getRecentInlineBots'
   }, callback or dl_cb, data))
 end
 
 -- Searches for recently used hashtags by their prefix
 -- @prefix Hashtag prefix to search for
--- @limit Maximum number of hashtags to return
-function tdbot.searchHashtags(prefix, lim, callback, data)
+-- @limit Maximum number of hashtags to be returned
+function tdbot.searchHashtags(prefix, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchHashtags',
+    ["@type"] = 'searchHashtags',
     prefix = tostring(prefix),
-    limit = lim
+    limit = limit
   }, callback or dl_cb, data))
 end
 
--- Deletes a hashtag from the list of recently used hashtags
--- @hashtag The hashtag to delete
-function tdbot.deleteRecentHashtag(hash, callback, data)
+-- Removes a hashtag from the list of recently used hashtags
+-- @hashtag Hashtag to delete
+function tdbot.removeRecentHashtag(hashtag, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteRecentHashtag',
-    hashtag = tostring(hash)
+    ["@type"] = 'removeRecentHashtag',
+    hashtag = tostring(hashtag)
   }, callback or dl_cb, data))
 end
 
--- Returns web page preview by text of the message.
--- Do not call this function to often.
--- Returns error 404 if web page has no preview
--- @message_text Message text
-function tdbot.getWebPagePreview(messagetext, callback, data)
+-- Returns a web page preview by the text of the message.
+-- Do not call this function too often.
+-- Returns a 404 error if the web page has no preview
+-- @text Message text with formatting
+function tdbot.getWebPagePreview(text, callback, data)
   assert (tdbot_function ({
-    _ = 'getWebPagePreview',
-    message_text = tostring(messagetext)
+    ["@type"] = 'getWebPagePreview',
+    text = formattedText
   }, callback or dl_cb, data))
 end
 
--- Returns web page instant view if available.
--- Returns error 404 if web page has no instant view
--- @url Web page URL
--- @force_full If true, full web page instant view will be returned
-function tdbot.getWebPageInstantView(uri, forcefull, callback, data)
+-- Returns an instant view version of a web page if available.
+-- Returns a 404 error if the web page has no instant view page
+-- @url The web page URL
+-- @force_full If true, the full instant view for the web page will be returned
+function tdbot.getWebPageInstantView(url, force_full, callback, data)
   assert (tdbot_function ({
-    _ = 'getWebPageInstantView',
-    url = tostring(uri),
-    force_full = forcefull
+    ["@type"] = 'getWebPageInstantView',
+    url = tostring(url),
+    force_full = force_full
   }, callback or dl_cb, data))
 end
 
--- Returns notification settings for a given scope
--- @scope Scope to return information about notification settings
----
--- NotificationSettingsScope @description Describes kinds of chat for which notification settings are applied
--- @chat_id Chat identifier
--- notificationSettingsScope: Chat | PrivateChats | GroupChats | AllChats
-function tdbot.getNotificationSettings(scop, chatid, callback, data)
+-- Returns the notification settings for a given scope
+-- @scope Scope for which to return the notification settings information
+function tdbot.getNotificationSettings(scope, callback, data)
   assert (tdbot_function ({
-    _ = 'getNotificationSettings',
-    scope = {
-      _ = 'notificationSettingsScope' .. scop,
-      chat_id = chatid
-    },
+    ["@type"] = 'getNotificationSettings',
+    scope = NotificationSettingsScope
   }, callback or dl_cb, data))
 end
 
 -- Changes notification settings for a given scope
--- @scope Scope to change notification settings
--- @notification_settings New notification settings for given scope
--- @mute_for Time left before notifications will be unmuted, seconds
--- @sound Audio file name for notifications, iPhone apps only
--- @show_preview Display message text/media in notification
-function tdbot.setNotificationSettings(scop, chatid, mutefor, isound, showpreview, callback, data)
+-- @scope Scope for which to change the notification settings
+-- @notification_settings The new notification settings for the given scope
+-- Chat|PrivateChats|BasicGroupChats|AllChats
+function tdbot.setNotificationSettings(scope, chat_id, mute_for, sound, show_preview, callback, data)
   assert (tdbot_function ({
-    _ = 'setNotificationSettings',
+    ["@type"] = 'setNotificationSettings',
     scope = {
-      _ = 'notificationSettingsScope' .. scop,
-      chat_id = chatid
+      ["@type"] = 'notificationSettingsScope' .. scope,
+      chat_id = chat_id
     },
     notification_settings = {
-      _ = 'notificationSettings',
-      mute_for = mutefor,
-      sound = tostring(isound),
-      show_preview = showpreview
-    },
+      ["@type"] = 'notificationSettings',
+      mute_for = mute_for,
+      sound = tostring(sound),
+      show_preview = show_preview
+    }
   }, callback or dl_cb, data))
 end
 
--- Resets all notification settings to the default value.
--- By default the only muted chats are supergroups, sound is set to 'default' and message previews are showed
+-- Changes notification settings for a given scope
+-- @scope Scope for which to change the notification settings
+-- @notification_settings The new notification settings for the given scope
+function tdbot.setNotificationSettings(scope, notification_settings, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setNotificationSettings',
+    scope = NotificationSettingsScope,
+    notification_settings = notificationSettings
+  }, callback or dl_cb, data))
+end
+
+-- Resets all notification settings to their default values.
+-- By default, the only muted chats are supergroups, the sound is set to "default" and message previews are shown
 function tdbot.resetAllNotificationSettings(callback, data)
   assert (tdbot_function ({
-    _ = 'resetAllNotificationSettings'
+    ["@type"] = 'resetAllNotificationSettings'
   }, callback or dl_cb, data))
 end
 
--- Uploads new profile photo for logged in user.
+-- Uploads a new profile photo for the current user.
 -- If something changes, updateUser will be sent
--- @photo Profile photo to set. inputFileId and inputFilePersistentId may be unsupported
-function tdbot.setProfilePhoto(photo_path, callback, data)
+-- @photo Profile photo to set.
+-- inputFileId and inputFileRemote may still be unsupported
+function tdbot.setProfilePhoto(photo, callback, data)
   assert (tdbot_function ({
-    _ = 'setProfilePhoto',
-    photo = getInputFile(photo_path)
+    ["@type"] = 'setProfilePhoto',
+    photo = getInputFile(photo)
   }, callback or dl_cb, data))
 end
 
--- Deletes profile photo.
+-- Deletes a profile photo.
 -- If something changes, updateUser will be sent
--- @profile_photo_id Identifier of profile photo to delete
-function tdbot.deleteProfilePhoto(profilephotoid, callback, data)
+-- @profile_photo_id Identifier of the profile photo to delete
+function tdbot.deleteProfilePhoto(profile_photo_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteProfilePhoto',
-    profile_photo_id = profilephotoid
+    ["@type"] = 'deleteProfilePhoto',
+    profile_photo_id = profile_photo_id
   }, callback or dl_cb, data))
 end
 
--- Changes first and last names of logged in user.
+-- Changes the first and last name of the current user.
 -- If something changes, updateUser will be sent
--- @first_name New value of user first name, 1-255 characters
--- @last_name New value of optional user last name, 0-255 characters
-function tdbot.changeName(firstname, lastname, callback, data)
+-- @first_name The new value of the first name for the user; 1-255 characters
+-- @last_name The new value of the optional last name for the user; 0-255 characters
+function tdbot.setName(first_name, last_name, callback, data)
   assert (tdbot_function ({
-    _ = 'changeName',
-    first_name = tostring(firstname),
-    last_name = tostring(lastname)
+    ["@type"] = 'setName',
+    first_name = tostring(first_name),
+    last_name = tostring(last_name)
   }, callback or dl_cb, data))
 end
 
--- Changes about information of logged in user
--- @about New value of userFull.about, 0-70 characters without line feeds
-function tdbot.changeAbout(abo, callback, data)
+-- Changes the bio of the current user
+-- @bio The new value of the user bio; 0-70 characters without line feeds
+function tdbot.setBio(bio, callback, data)
   assert (tdbot_function ({
-    _ = 'changeAbout',
-    about = tostring(abo)
+    ["@type"] = 'setBio',
+    bio = tostring(bio)
   }, callback or dl_cb, data))
 end
 
--- Changes username of logged in user.
+-- Changes the username of the current user.
 -- If something changes, updateUser will be sent
--- @username New value of username. Use empty string to remove username
-function tdbot.changeUsername(uname, callback, data)
+-- @username The new value of the username.
+-- Use an empty string to remove the username
+function tdbot.setUsername(username, callback, data)
   assert (tdbot_function ({
-    _ = 'changeUsername',
-    username = tostring(uname)
+    ["@type"] = 'setUsername',
+    username = tostring(username)
   }, callback or dl_cb, data))
 end
 
--- Changes user's phone number and sends authentication code to the new user's phone number.
--- Returns authStateWaitCode with information about sent code on success
--- @phone_number New user's phone number in any reasonable format
--- @allow_flash_call Pass True, if code can be sent via flash call to the specified phone number
--- @is_current_phone_number Pass true, if the phone number is used on the current device. Ignored if allow_flash_call is False
-function tdbot.changePhoneNumber(phonenumber, allowflashcall, iscurrentphonenumber, callback, data)
+-- Changes the phone number of the user and sends an authentication code to the user's new phone number.
+-- On success, returns information about the sent code
+-- @phone_number The new phone number of the user in international format
+-- @allow_flash_call Pass true if the code can be sent via flash call to the specified phone number
+-- @is_current_phone_number Pass true if the phone number is used on the current device.
+-- Ignored if allow_flash_call is false
+function tdbot.changePhoneNumber(phone_number, allow_flash_call, is_current_phone_number, callback, data)
   assert (tdbot_function ({
-    _ = 'changePhoneNumber',
-    phone_number = tostring(phonenumber),
-    allow_flash_call = allowflashcall,
-    is_current_phone_number = iscurrentphonenumber
+    ["@type"] = 'changePhoneNumber',
+    phone_number = tostring(phone_number),
+    allow_flash_call = allow_flash_call,
+    is_current_phone_number = is_current_phone_number
   }, callback or dl_cb, data))
 end
 
--- Resends authentication code sent to change user's phone number.
--- Wotks only if in previously received authStateWaitCode next_code_type was not null.
--- Returns authStateWaitCode on success
+-- Re-sends the authentication code sent to confirm a new phone number for the user.
+-- Works only if the previously received authenticationCodeInfo next_code_type was not null
 function tdbot.resendChangePhoneNumberCode(callback, data)
   assert (tdbot_function ({
-    _ = 'resendChangePhoneNumberCode'
+    ["@type"] = 'resendChangePhoneNumberCode'
   }, callback or dl_cb, data))
 end
 
--- Checks authentication code sent to change user's phone number.
--- Returns authStateOk on success
--- @code Verification code from SMS, phone call or flash call
-function tdbot.checkChangePhoneNumberCode(cod, callback, data)
+-- Checks the authentication code sent to confirm a new phone number of the user
+-- @code Verification code received by SMS, phone call or flash call
+function tdbot.checkChangePhoneNumberCode(code, callback, data)
   assert (tdbot_function ({
-    _ = 'checkChangePhoneNumberCode',
-    code = tostring(cod)
+    ["@type"] = 'checkChangePhoneNumberCode',
+    code = tostring(code)
   }, callback or dl_cb, data))
 end
 
--- Returns all active sessions of logged in user
+-- Returns all active sessions of the current user
 function tdbot.getActiveSessions(callback, data)
   assert (tdbot_function ({
-    _ = 'getActiveSessions'
+    ["@type"] = 'getActiveSessions'
   }, callback or dl_cb, data))
 end
 
--- Terminates another session of logged in user
+-- Terminates a session of the current user
 -- @session_id Session identifier
-function tdbot.terminateSession(sessionid, callback, data)
+function tdbot.terminateSession(session_id, callback, data)
   assert (tdbot_function ({
-    _ = 'terminateSession',
-    session_id = sessionid
+    ["@type"] = 'terminateSession',
+    session_id = session_id
   }, callback or dl_cb, data))
 end
 
--- Terminates all other sessions of logged in user
+-- Terminates all other sessions of the current user
 function tdbot.terminateAllOtherSessions(callback, data)
   assert (tdbot_function ({
-    _ = 'terminateAllOtherSessions'
+    ["@type"] = 'terminateAllOtherSessions'
   }, callback or dl_cb, data))
 end
 
--- Gives or revokes all members of the group administrator rights.
--- Needs creator privileges in the group
--- @group_id Identifier of the group
+-- Returns all website where the current user used Telegram to log in
+function tdbot.getConnectedWebsites(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getConnectedWebsites'
+  }, callback or dl_cb, data))
+end
+
+-- Disconnects website from the current user's Telegram account
+-- @website_id Website identifier
+function tdbot.disconnectWebsite(website_id, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'disconnectWebsite',
+    website_id = website_id
+  }, callback or dl_cb, data))
+end
+
+-- Disconnects all websites from the current user's Telegram account
+function tdbot.disconnectAllWebsites(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'disconnectAllWebsites'
+  }, callback or dl_cb, data))
+end
+
+-- Toggles the "All members are admins" setting in basic groups; requires creator privileges in the group
+-- @basic_group_id Identifier of the basic group
 -- @everyone_is_administrator New value of everyone_is_administrator
-function tdbot.toggleGroupAdministrators(groupid, everyoneisadministrator, callback, data)
+function tdbot.toggleBasicGroupAdministrators(basic_group_id, everyone_is_administrator, callback, data)
   assert (tdbot_function ({
-    _ = 'toggleGroupAdministrators',
-    group_id = getChatId(groupid).id,
-    everyone_is_administrator = everyoneisadministrator
+    ["@type"] = 'toggleBasicGroupAdministrators',
+    basic_group_id = getChatId(basic_group_id).id,
+    everyone_is_administrator = everyone_is_administrator
   }, callback or dl_cb, data))
 end
 
--- Changes username of the channel.
--- Needs creator privileges in the channel
--- @channel_id Identifier of the channel
--- @username New value of username. Use empty string to remove username
-function tdbot.changeChannelUsername(channelid, uname, callback, data)
+-- Changes the username of a supergroup or channel, requires creator privileges in the supergroup or channel
+-- @supergroup_id Identifier of the supergroup or channel
+-- @username New value of the username.
+-- Use an empty string to remove the username
+function tdbot.setSupergroupUsername(supergroup_id, username, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChannelUsername',
-    channel_id = getChatId(channelid).id,
-    username = tostring(uname)
+    ["@type"] = 'setSupergroupUsername',
+    supergroup_id = getChatId(supergroup_id).id,
+    username = tostring(username)
   }, callback or dl_cb, data))
 end
 
--- Changes sticker set of the channel.
--- Needs appropriate rights in the channel
--- @channel_id Identifier of the channel
--- @sticker_set_id New value of channel sticker set identifier. Use 0 to remove channel sticker set
-function tdbot.setChannelStickerSet(channelid, stickersetid, callback, data)
+-- Changes the sticker set of a supergroup; requires appropriate rights in the supergroup
+-- @supergroup_id Identifier of the supergroup
+-- @sticker_set_id New value of the supergroup sticker set identifier.
+-- Use 0 to remove the supergroup sticker set
+function tdbot.setSupergroupStickerSet(supergroup_id, sticker_set_id, callback, data)
   assert (tdbot_function ({
-    _ = 'setChannelStickerSet',
-    channel_id = getChatId(channelid).id,
-    sticker_set_id = stickersetid
+    ["@type"] = 'setSupergroupStickerSet',
+    supergroup_id = getChatId(supergroup_id).id,
+    sticker_set_id = sticker_set_id
   }, callback or dl_cb, data))
 end
 
--- Gives or revokes right to invite new members to all current members of the channel.
--- Needs appropriate rights in the channel.
--- Available only for supergroups
--- @channel_id Identifier of the channel
+-- Toggles whether all members of a supergroup can add new members; requires appropriate administrator rights in the supergroup.
+-- @supergroup_id Identifier of the supergroup
 -- @anyone_can_invite New value of anyone_can_invite
-function tdbot.toggleChannelInvites(channelid, anyonecaninvite, callback, data)
+function tdbot.toggleSupergroupInvites(supergroup_id, anyone_can_invite, callback, data)
   assert (tdbot_function ({
-    _ = 'toggleChannelInvites',
-    channel_id = getChatId(channelid).id,
-    anyone_can_invite = anyonecaninvite
+    ["@type"] = 'toggleSupergroupInvites',
+    supergroup_id = getChatId(supergroup_id).id,
+    anyone_can_invite = anyone_can_invite
   }, callback or dl_cb, data))
 end
 
--- Enables or disables sender signature on sent messages in the channel.
--- Needs appropriate rights in the channel.
--- Not available for supergroups
--- @channel_id Identifier of the channel
+-- Toggles sender signatures messages sent in a channel; requires appropriate administrator rights in the channel.
+-- @supergroup_id Identifier of the channel
 -- @sign_messages New value of sign_messages
-function tdbot.toggleChannelSignMessages(channelid, signmessages, callback, data)
+function tdbot.toggleSupergroupSignMessages(supergroup_id, sign_messages, callback, data)
   assert (tdbot_function ({
-    _ = 'toggleChannelSignMessages',
-    channel_id = getChatId(channelid).id,
-    sign_messages = signmessages
+    ["@type"] = 'toggleSupergroupSignMessages',
+    supergroup_id = getChatId(supergroup_id).id,
+    sign_messages = sign_messages
   }, callback or dl_cb, data))
 end
 
--- Changes information about the channel.
--- Needs appropriate rights in the channel
--- @channel_id Identifier of the channel
--- @description New channel description, 0-255 characters
-function tdbot.changeChannelDescription(channelid, descript, callback, data)
+-- Toggles whether the message history of a supergroup is available to new members; requires appropriate administrator rights in the supergroup.
+-- @supergroup_id The identifier of the supergroup
+-- @is_all_history_available The new value of is_all_history_available
+function tdbot.toggleSupergroupIsAllHistoryAvailable(supergroup_id, is_all_history_available, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChannelDescription',
-    channel_id = getChatId(channelid).id,
-    description = tostring(descript)
+    ["@type"] = 'toggleSupergroupIsAllHistoryAvailable',
+    supergroup_id = getChatId(supergroup_id).id,
+    is_all_history_available = is_all_history_available
   }, callback or dl_cb, data))
 end
 
--- Pins a message in a supergroup channel chat.
--- Needs appropriate rights in the channel
--- @channel_id Identifier of the channel
+-- Changes information about a supergroup or channel; requires appropriate administrator rights
+-- @supergroup_id Identifier of the supergroup or channel
+-- @param_description New supergroup or channel description; 0-255 characters
+function tdbot.setSupergroupDescription(supergroup_id, description, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setSupergroupDescription',
+    supergroup_id = getChatId(supergroup_id).id,
+    description = tostring(description)
+  }, callback or dl_cb, data))
+end
+
+-- Pins a message in a supergroup or channel; requires appropriate administrator rights in the supergroup or channel
+-- @supergroup_id Identifier of the supergroup or channel
 -- @message_id Identifier of the new pinned message
 -- @disable_notification True, if there should be no notification about the pinned message
-function tdbot.pinChannelMessage(channelid, messageid, disablenotification, callback, data)
+function tdbot.pinSupergroupMessage(supergroup_id, message_id, disable_notification, callback, data)
   assert (tdbot_function ({
-    _ = 'pinChannelMessage',
-    channel_id = getChatId(channelid).id,
-    message_id = messageid,
-    disable_notification = disablenotification
+    ["@type"] = 'pinSupergroupMessage',
+    supergroup_id = getChatId(supergroup_id).id,
+    message_id = message_id,
+    disable_notification = disable_notification
   }, callback or dl_cb, data))
 end
 
--- Removes pinned message in the supergroup channel.
--- Needs appropriate rights in the channel
--- @channel_id Identifier of the channel
-function tdbot.unpinChannelMessage(channelid, callback, data)
+-- Removes the pinned message from a supergroup or channel; requires appropriate administrator rights in the supergroup or channel
+-- @supergroup_id Identifier of the supergroup or channel
+function tdbot.unpinSupergroupMessage(supergroup_id, callback, data)
   assert (tdbot_function ({
-    _ = 'unpinChannelMessage',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'unpinSupergroupMessage',
+    supergroup_id = getChatId(supergroup_id).id
   }, callback or dl_cb, data))
 end
 
--- Reports some supergroup channel messages from a user as spam messages
--- @channel_id Channel identifier
+-- Reports some messages from a user in a supergroup as spam
+-- @supergroup_id Supergroup identifier
 -- @user_id User identifier
--- @message_ids Identifiers of messages sent in the supergroup by the user, the list should be non-empty -- vector<int53>
-function tdbot.reportChannelSpam(channelid, userid, messageids, callback, data)
+-- @message_ids Identifiers of messages sent in the supergroup by the user.
+-- This list must be non-empty
+function tdbot.reportSupergroupSpam(supergroup_id, user_id, message_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'reportChannelSpam',
-    channel_id = getChatId(channelid).id,
-    user_id = userid,
-    message_ids = getVector(messageids)
+    ["@type"] = 'reportSupergroupSpam',
+    supergroup_id = getChatId(supergroup_id).id,
+    user_id = user_id,
+    message_ids = vectorize(message_ids)
   }, callback or dl_cb, data))
 end
 
--- Returns information about channel members or banned users.
--- Can be used only if channel_full->can_get_members == true.
--- Administrator privileges may be additionally needed for some filters
--- @channel_id Identifier of the channel
--- @filter Kind of channel users to return, defaults to channelMembersRecent
--- @offset Number of channel users to skip
--- @limit Maximum number of users be returned, can't be greater than 200
----
--- channelMembersFilter Specifies kind of chat users to return in getChannelMembers
--- @query Query to search for
--- channelMembersFilter: Recent | Administrators | Search | Restricted | Banned | Bots
-function tdbot.getChannelMembers(channelid, off, lim, mbrfilter, searchquery, callback, data)
-  local lim = lim or 200
-  lim = lim > 200 and 200 or lim
-
+-- Returns information about members or banned users in a supergroup or channel.
+-- Can be used only if SupergroupFullInfo.can_get_members == true; additionally, administrator privileges may be required for some filters
+-- @supergroup_id Identifier of the supergroup or channel
+-- @filter The type of users to return.
+-- By default, supergroupMembersRecent
+-- @offset Number of users to skip
+-- @limit The maximum number of users be returned; up to 200
+-- supergroupMembersFilter = Recent|Administrators|Search|Restricted|Banned|Bots
+function tdbot.getSupergroupMembers(supergroup_id, filter, query, offset, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getChannelMembers',
-    channel_id = getChatId(channelid).id,
+    ["@type"] = 'getSupergroupMembers',
+    supergroup_id = getChatId(supergroup_id).id,
     filter = {
-      _ = 'channelMembersFilter' .. mbrfilter,
-      query = tostring(searchquery)
+      ["@type"] = 'supergroupMembersFilter' .. filter,
+      query = query
     },
-    offset = off,
-    limit = lim
+    offset = offset or 0,
+    limit = setLimit(200, limit)
   }, callback or dl_cb, data))
 end
 
--- Deletes channel along with all messages in corresponding chat.
--- Releases channel username and removes all members.
--- Needs creator privileges in the channel.
--- Channels with more than 1000 members can't be deleted
--- @channel_id Identifier of the channel
-function tdbot.deleteChannel(channelid, callback, data)
+-- Deletes a supergroup or channel along with all messages in the corresponding chat.
+-- This will release the supergroup or channel username and remove all members; requires creator privileges in the supergroup or channel.
+-- Chats with more than 1000 members can't be deleted using this method
+-- @supergroup_id Identifier of the supergroup or channel
+function tdbot.deleteSupergroup(supergroup_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteChannel',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'deleteSupergroup',
+    supergroup_id = getChatId(supergroup_id).id
   }, callback or dl_cb, data))
 end
 
--- Closes secret chat, effectively transfering its state to 'Closed'
+-- Closes a secret chat, effectively transfering its state to secretChatStateClosed
 -- @secret_chat_id Secret chat identifier
-function tdbot.closeSecretChat(secretchatid, callback, data)
+function tdbot.closeSecretChat(secret_chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'closeSecretChat',
-    secret_chat_id = secretchatid
+    ["@type"] = 'closeSecretChat',
+    secret_chat_id = secret_chat_id
   }, callback or dl_cb, data))
 end
 
--- Returns list of service actions taken by chat members and administrators in the last 48 hours, available only in channels.
+-- Returns a list of service actions taken by chat members and administrators in the last 48 hours.
+-- Available only in supergroups and channels.
 -- Requires administrator rights.
--- Returns result in reverse chronological order, i.e. in order of decreasing event_id
+-- Returns results in reverse chronological order (i.
+-- e., in order of decreasing event_id)
 -- @chat_id Chat identifier
--- @query Search query to filter events
--- @from_event_id Identifier of an event from which to return result, you can use 0 to get results from the latest events
--- @limit Maximum number of events to return, can't be greater than 100
--- @filters Types of events to return, defaults to all
--- @user_ids User identifiers, which events to return, defaults to all users -- vector<int32>
----
--- chatEventLogFilters Represents a set of filters used to obtain a chat event log
--- @message_edits True, if message edits should be returned
--- @message_deletions True, if message deletions should be returned
--- @message_pins True, if message pins should be returned
--- @member_joins True, if chat member joins should be returned
--- @member_leaves True, if chat member leaves should be returned
--- @member_invites True, if chat member invites should be returned
--- @member_promotions True, if chat member promotions/demotions should be returned
--- @member_restrictions True, if chat member restrictions/unrestrictions including bans/unbans should be returned
--- @info_changes True, if changes of chat information should be returned
--- @setting_changes True, if changes of chat settings should be returned
-function tdbot.getChatEventLog(chatid, searchquery, fromeventid, lim, userids, msgedits, msgdeletions, msgpins, mbrjoins, mbrleaves, mbrinvites, mbrpromotions, mbrrestrictions, infochanges, settingchanges, callback, data)
+-- @query Search query by which to filter events
+-- @from_event_id Identifier of an event from which to return results.
+-- Use 0 to get results from the latest events
+-- @limit Maximum number of events to return; up to 100
+-- @filters The types of events to return.
+-- By default, all types will be returned
+-- @user_ids User identifiers by which to filter events.
+-- By default, events relating to all users will be returned
+function tdbot.getChatEventLog(chat_id, query, from_event_id, limit, filters, user_ids, callback, data)
+  local filters = filters or {1,1,1,1,1,1,1,1,1,1}
+
   assert (tdbot_function ({
-    _ = 'getChatEventLog',
-    chat_id = chatid,
-    query = tostring(searchquery),
-    from_event_id = fromeventid,
-    limit = lim,
+    ["@type"] = 'getChatEventLog',
+    chat_id = chat_id,
+    query = tostring(query) or '',
+    from_event_id = from_event_id or 0,
+    limit = setLimit(100, limit),
     filters = {
-      _ = 'chatEventLogFilters',
-      message_edits = msgedits or 1,
-      message_deletions = msgdeletions or 1,
-      message_pins = msgpins or 1,
-      member_joins = mbrjoins or 1,
-      member_leaves = mbrleaves or 1,
-      member_invites = mbrinvites or 1,
-      member_promotions = mbrpromotions or 1,
-      member_restrictions = mbrrestrictions or 1,
-      info_changes = infochanges or 1,
-      setting_changes = settingchanges or 1
+      ["@type"] = 'chatEventLogFilters',
+      message_edits = filters[0],
+      message_deletions = filters[1],
+      message_pins = filters[2],
+      member_joins = filters[3],
+      member_leaves = filters[4],
+      member_invites = filters[5],
+      member_promotions = filters[6],
+      member_restrictions = filters[7],
+      info_changes = filters[8],
+      setting_changes = filters[9]
     },
-    user_ids = getVector(userids)
+    user_ids = vectorize(user_ids)
   }, callback or dl_cb, data))
 end
 
--- Returns invoice payment form.
--- The method should be called when user presses inlineKeyboardButtonBuy
+-- Returns an invoice payment form.
+-- This method should be called when the user presses inlineKeyboardButtonBuy
 -- @chat_id Chat identifier of the Invoice message
 -- @message_id Message identifier
-function tdbot.getPaymentForm(chatid, messageid, callback, data)
+function tdbot.getPaymentForm(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getPaymentForm',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'getPaymentForm',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
--- Validates order information provided by the user and returns available shipping options for flexible invoice
+-- Validates the order information provided by a user and returns the available shipping options for a flexible invoice
 -- @chat_id Chat identifier of the Invoice message
 -- @message_id Message identifier
--- @order_info Order information, provided by the user
--- @allow_save True, if order information can be saved
-function tdbot.validateOrderInfo(chatid, messageid, orderinfo, allowsave, callback, data)
+-- @order_info The order information, provided by the user
+-- @allow_save True, if the order information can be saved
+function tdbot.validateOrderInfo(chat_id, message_id, order_info, allow_save, callback, data)
   assert (tdbot_function ({
-    _ = 'validateOrderInfo',
-    chat_id = chatid,
-    message_id = messageid,
+    ["@type"] = 'validateOrderInfo',
+    chat_id = chat_id,
+    message_id = message_id,
     order_info = orderInfo,
-    allow_save = allowsave
+    allow_save = allow_save
   }, callback or dl_cb, data))
 end
 
--- Sends filled payment form to the bot for the final verification
+-- Sends a filled-out payment form to the bot for final verification
 -- @chat_id Chat identifier of the Invoice message
 -- @message_id Message identifier
--- @order_info_id Identifier returned by ValidateOrderInfo or empty string
+-- @order_info_id Identifier returned by ValidateOrderInfo, or an empty string
 -- @shipping_option_id Identifier of a chosen shipping option, if applicable
--- @credentials Credentials choosed by user for payment
--- @saved_credentials_id Identifier of saved credentials
--- @data JSON-encoded data with credentials identifier from the payment provider
--- @allow_save True, if credentials identifier can be saved server-side
-function tdbot.sendPaymentForm(chatid, messageid, orderinfoid, shippingoptionid, credent, input_credentials, callback, data)
-  local input_credentials = input_credentials or {}
-
-  if credent == 'Saved' then
-    input_credentials = {
-      saved_credentials_id = tostring(input_credentials[1])
-    }
-  elseif credent == 'New' then
-    input_credentials = {
-      data = tostring(input_credentials[1]),
-      allow_save = input_credentials[2]
-    }
-  end
-
-  input_credentials._ = 'inputCredentials' .. credent
-
+-- @credentials The credentials chosen by user for payment
+function tdbot.sendPaymentForm(chat_id, message_id, order_info_id, shipping_option_id, credentials, callback, data)
   assert (tdbot_function ({
-    _ = 'sendPaymentForm',
-    chat_id = chatid,
-    message_id = messageid,
-    order_info_id = tostring(orderinfoid),
-    shipping_option_id = tostring(shippingoptionid),
-    credentials = input_credentials
+    ["@type"] = 'sendPaymentForm',
+    chat_id = chat_id,
+    message_id = message_id,
+    order_info_id = tostring(order_info_id),
+    shipping_option_id = tostring(shipping_option_id),
+    credentials = InputCredentials
   }, callback or dl_cb, data))
 end
 
--- Returns information about successful payment
+-- Returns information about a successful payment
 -- @chat_id Chat identifier of the PaymentSuccessful message
 -- @message_id Message identifier
-function tdbot.getPaymentReceipt(chatid, messageid, callback, data)
+function tdbot.getPaymentReceipt(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getPaymentReceipt',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'getPaymentReceipt',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
--- Returns saved order info if any
+-- Returns saved order info, if any
 function tdbot.getSavedOrderInfo(callback, data)
   assert (tdbot_function ({
-    _ = 'getSavedOrderInfo'
+    ["@type"] = 'getSavedOrderInfo'
   }, callback or dl_cb, data))
 end
 
 -- Deletes saved order info
 function tdbot.deleteSavedOrderInfo(callback, data)
   assert (tdbot_function ({
-    _ = 'deleteSavedOrderInfo'
+    ["@type"] = 'deleteSavedOrderInfo'
   }, callback or dl_cb, data))
 end
 
--- Deletes saved credentials for all payments provider bots
+-- Deletes saved credentials for all payment provider bots
 function tdbot.deleteSavedCredentials(callback, data)
   assert (tdbot_function ({
-    _ = 'deleteSavedCredentials'
+    ["@type"] = 'deleteSavedCredentials'
   }, callback or dl_cb, data))
 end
 
--- Returns user that can be contacted to get support
+-- Returns a user that can be contacted to get support
 function tdbot.getSupportUser(callback, data)
   assert (tdbot_function ({
-    _ = 'getSupportUser'
+    ["@type"] = 'getSupportUser'
   }, callback or dl_cb, data))
 end
 
 -- Returns background wallpapers
 function tdbot.getWallpapers(callback, data)
   assert (tdbot_function ({
-    _ = 'getWallpapers'
+    ["@type"] = 'getWallpapers'
   }, callback or dl_cb, data))
 end
 
--- Registers current used device for receiving push notifications
+-- Registers the currently used device for receiving push notifications
 -- @device_token Device token
--- @token The token, may be empty to unregister device
--- deviceToken: Apns | Gcm | SimplePush | UbuntuPhone | Blackberry
-function tdbot.registerDevice(devicetoken, tokn, callback, data)
+-- GoogleCloudMessaging|ApplePush|ApplePushVoIP|WindowsPush|MicrosoftPush|MicrosoftPushVoIP|WebPush|SimplePush|UbuntuPush|BlackberryPush|TizenPush
+-- @other_user_ids List of at most 100 user identifiers of other users currently using the client
+function tdbot.registerDevice(device, token, device_token, is_app_sandbox, access_token, channel_uri, endpoint, p256dh_base64url, auth_base64url, reg_id, other_user_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'registerDevice',
+    ["@type"] = 'registerDevice',
     device_token = {
-      _ = 'deviceToken' .. devicetoken,
-      token = tokn
+      ["@type"] = deviceToken .. device,
+      device_token = device_token,
+      is_app_sandbox = is_app_sandbox,
+      access_token = access_token,
+      channel_uri = channel_uri,
+      endpoint = endpoint,
+      p256dh_base64url = p256dh_base64url,
+      auth_base64url = auth_base64url,
+      token = token,
+      reg_id = reg_id
     },
+    other_user_ids = vectorize(other_user_ids)
   }, callback or dl_cb, data))
 end
 
--- Changes privacy settings
--- @key Privacy key
--- @rules New privacy rules
--- privacyKey: UserStatus | ChatInvite | Call
--- rule: AllowAll | AllowContacts | AllowUsers | DisallowAll | DisallowContacts | DisallowUsers
-function tdbot.setPrivacy(privacy_key, rule, allowed_user_ids, disallowed_user_ids, callback, data)
-  local privacy_rules = {[0] = {_ = 'privacyRule' .. rule}}
+-- Returns t.me URLs recently visited by a newly registered user
+-- @referrer Google Play referrer to identify the user
+function tdbot.getRecentlyVisitedTMeUrls(referrer, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getRecentlyVisitedTMeUrls',
+    referrer = tostring(referrer)
+  }, callback or dl_cb, data))
+end
+
+-- Changes user privacy settings
+-- @setting The privacy setting: ShowStatus|AllowChatInvites|AllowCalls
+-- @rules The new privacy rules
+-- AllowAll|AllowContacts|AllowUsers|RestrictAll|RestrictContacts|RestrictUsers
+function tdbot.setUserPrivacySettingRules(setting, rules, allowed_user_ids, restricted_user_ids, callback, data)
+  local setting_rules = {
+    [0] = {
+      ["@type"] = "userPrivacySettingRule" .. rules
+    }
+  }
 
   if allowed_user_ids then
-    privacy_rules = {
+    setting_rules[#setting_rules + 1] = {
       {
-        _ = 'privacyRule' .. rule
-      },
-      [0] = {
-        _ = 'privacyRuleAllowUsers',
-        user_ids = allowed_user_ids
-      },
+        ["@type"] = "userPrivacySettingRuleAllowUsers",
+        user_ids = vectorize(allowed_user_ids)
+      }
+    }
+  elseif restricted_user_ids then
+    setting_rules[#setting_rules + 1] = {
+      {
+        ["@type"] = "userPrivacySettingRuleRestrictUsers",
+        user_ids = vectorize(restricted_user_ids)
+      }
     }
   end
-  if disallowed_user_ids then
-    privacy_rules = {
-      {
-        _ = 'privacyRule' .. rule
-      },
-      [0] = {
-        _ = 'privacyRuleDisallowUsers',
-        user_ids = disallowed_user_ids
-      },
-    }
-  end
-  if allowed_user_ids and disallowed_user_ids then
-    privacy_rules = {
-      {
-        _ = 'privacyRule' .. rule
-      },
-      {
-        _ = 'privacyRuleAllowUsers',
-        user_ids = allowed_user_ids
-      },
-      [0] = {
-        _ = 'privacyRuleDisallowUsers',
-        user_ids = disallowed_user_ids
-      },
-    }
-  end
+
   assert (tdbot_function ({
-    _ = 'setPrivacy',
-    key = {
-      _ = 'privacyKey' .. privacy_key
+    ["@type"] = 'setUserPrivacySettingRules',
+    setting = {
+      ["@type"] = "userPrivacySetting" .. setting
     },
     rules = {
-      _ = 'privacyRules',
-      rules = privacy_rules, -- vector<PrivacyRule>
-    },
+      ["@type"] = "userPrivacySettingRules",
+      rules = setting_rules
+    }
   }, callback or dl_cb, data))
 end
 
--- Returns current privacy settings
--- @key Privacy key
--- privacyKey: UserStatus | ChatInvite | Call
-function tdbot.getPrivacy(pkey, callback, data)
+-- Returns the current privacy settings
+-- @setting The privacy setting
+function tdbot.getUserPrivacySettingRules(setting, callback, data)
   assert (tdbot_function ({
-    _ = 'getPrivacy',
-    key = {
-      _ = 'privacyKey' .. pkey
-    },
+    ["@type"] = 'getUserPrivacySettingRules',
+    setting = {
+      ["@type"] = 'userPrivacySetting' .. setting
+    }
   }, callback or dl_cb, data))
 end
 
--- Returns value of an option by its name.
--- See list of available options on https://core.telegram.org/tdlib/options.
+-- Returns the value of an option by its name.
+-- (Check the list of available options on https://core.telegram.org/tdlib/options.) Can be called before authorization
+-- @name The name of the option
+function tdbot.getOption(name, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getOption',
+    name = tostring(name)
+  }, callback or dl_cb, data))
+end
+
+-- Sets the value of an option.
+-- (Check the list of available options on https://core.telegram.org/tdlib/options.) Only writable options can be set.
 -- Can be called before authorization
--- @name Name of the option
-function tdbot.getOption(optionname, callback, data)
+-- @name The name of the option
+-- @value The new value of the option
+function tdbot.setOption(name, value, callback, data)
   assert (tdbot_function ({
-    _ = 'getOption',
-    name = tostring(optionname)
+    ["@type"] = 'setOption',
+    name = tostring(name),
+    value = OptionValue
   }, callback or dl_cb, data))
 end
 
--- Sets value of an option.
--- See list of available options on https://core.telegram.org/tdlib/options.
--- Only writable options can be set.
--- Can be called before authorization
--- @name Name of the option
--- @value New value of the option
--- optionValue: Boolean | Empty | Integer | String
-function tdbot.setOption(optionname, option, optionvalue, callback, data)
-  assert (tdbot_function ({
-    _ = 'setOption',
-    name = tostring(optionname),
-    value = {
-      _ = 'optionValue' .. option,
-      value = optionvalue
-    },
-  }, callback or dl_cb, data))
-end
-
--- Changes period of inactivity, after which the account of currently logged in user will be automatically deleted
+-- Changes the period of inactivity after which the account of the current user will automatically be deleted
 -- @ttl New account TTL
--- @days Number of days of inactivity before account deletion, should be from 30 and up to 366
-function tdbot.changeAccountTtl(day, callback, data)
+function tdbot.setAccountTtl(ttl, callback, data)
   assert (tdbot_function ({
-    _ = 'changeAccountTtl',
+    ["@type"] = 'setAccountTtl',
     ttl = {
-      _ = 'accountTtl',
-      days = day
-    },
+      ["@type"] = 'accountTtl',
+      days = ttl
+    }
   }, callback or dl_cb, data))
 end
 
--- Returns period of inactivity, after which the account of currently logged in user will be automatically deleted
+-- Returns the period of inactivity after which the account of the current user will automatically be deleted
 function tdbot.getAccountTtl(callback, data)
   assert (tdbot_function ({
-    _ = 'getAccountTtl'
+    ["@type"] = 'getAccountTtl'
   }, callback or dl_cb, data))
 end
 
--- Deletes the account of currently logged in user, deleting from the server all information associated with it.
--- Account's phone number can be used to create new account, but only once in two weeks
--- @reason Optional reason of account deletion
-function tdbot.deleteAccount(rea, callback, data)
+-- Deletes the account of the current user, deleting all information associated with the user from the server.
+-- The phone number of the account can be used to create a new account
+-- @reason The reason why the account was deleted; optional
+function tdbot.deleteAccount(reason, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteAccount',
-    reason = tostring(rea)
+    ["@type"] = 'deleteAccount',
+    reason = tostring(reason)
   }, callback or dl_cb, data))
 end
 
--- Returns current chat report spam state
+-- Returns information on whether the current chat can be reported as spam
 -- @chat_id Chat identifier
-function tdbot.getChatReportSpamState(chatid, callback, data)
+function tdbot.getChatReportSpamState(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChatReportSpamState',
-    chat_id = chatid
+    ["@type"] = 'getChatReportSpamState',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
--- Reports chat as a spam chat or as not a spam chat.
+-- Used to let the server know whether a chat is spam or not.
 -- Can be used only if ChatReportSpamState.can_report_spam is true.
--- After this request ChatReportSpamState.can_report_spam became false forever
+-- After this request, ChatReportSpamState.can_report_spam becomes false forever
 -- @chat_id Chat identifier
--- @is_spam_chat If true, chat will be reported as a spam chat, otherwise it will be marked as not a spam chat
-function tdbot.changeChatReportSpamState(chatid, isspamchat, callback, data)
+-- @is_spam_chat If true, the chat will be reported as spam; otherwise it will be marked as not spam
+function tdbot.changeChatReportSpamState(chat_id, is_spam_chat, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChatReportSpamState',
-    chat_id = chatid,
-    is_spam_chat = isspamchat
+    ["@type"] = 'changeChatReportSpamState',
+    chat_id = chat_id,
+    is_spam_chat = is_spam_chat
   }, callback or dl_cb, data))
 end
 
--- Reports chat to Telegram moderators.
--- Can be used only for a channel chat or a private chat with a bot, because all other chats can't be checked by moderators
+-- Reports a chat to the Telegram moderators.
+-- Supported only for supergroups, channels, or private chats with bots, since other chats can't be checked by moderators
 -- @chat_id Chat identifier
--- @reason Reason, the chat is reported
--- @text Report text
--- reason: Spam | Violence | Pornography | Other
-function tdbot.reportChat(chatid, reasn, teks, callback, data)
+-- @reason The reason for reporting the chat: Spam|Violence|Pornography|Custom
+-- @message_ids Identifiers of reported messages, if any
+function tdbot.reportChat(chat_id, reason, text, callback, data)
   assert (tdbot_function ({
-    _ = 'reportChat',
-    chat_id = chatid,
+    ["@type"] = 'reportChat',
+    chat_id = chat_id,
     reason = {
-      _ = 'chatReportReason' .. reasn,
-      text = teks
-    },
+      ["@type"] = 'chatReportReason' .. reason,
+      text = text
+    }
   }, callback or dl_cb, data))
 end
 
 -- Returns storage usage statistics
--- @chat_limit Maximum number of chats with biggest storage usage for which separate statistics should be returned.
+-- @chat_limit Maximum number of chats with the largest storage usage for which separate statistics should be returned.
 -- All other chats will be grouped in entries with chat_id == 0.
--- If chat info database is not used, chat_limit is ignored and is always set to 0
-function tdbot.getStorageStatistics(chatlimit, callback, data)
+-- If the chat info database is not used, the chat_limit is ignored and is always set to 0
+function tdbot.getStorageStatistics(chat_limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getStorageStatistics',
-    chat_limit = chatlimit
+    ["@type"] = 'getStorageStatistics',
+    chat_limit = chat_limit
   }, callback or dl_cb, data))
 end
 
 -- Quickly returns approximate storage usage statistics
 function tdbot.getStorageStatisticsFast(callback, data)
   assert (tdbot_function ({
-    _ = 'getStorageStatisticsFast'
+    ["@type"] = 'getStorageStatisticsFast'
   }, callback or dl_cb, data))
 end
 
--- Optimizes storage usage, i.e. deletes some files and return new storage usage statistics.
+-- Optimizes storage usage, i.e.
+-- deletes some files and returns new storage usage statistics.
 -- Secret thumbnails can't be deleted
--- @size Limit on total size of files after deletion. Pass -1 to use default limit
--- @ttl Limit on time passed since last access time (or creation time on some filesystems) to a file. Pass -1 to use default limit
--- @count Limit on total count of files after deletion. Pass -1 to use default limit
--- @immunity_delay Number of seconds after creation of a file, it can't be delited. Pass -1 to use default value
--- @file_types If not empty, only files with given types are considered. By default, all types except thumbnails, profile photos, stickers and wallpapers are deleted -- vector<FileType>
--- @file_types: None | Animation | Audio | Document | Photo | ProfilePhoto | Secret | Sticker | Thumb | Unknown | Video | VideoNote | Voice | Wallpaper | SecretThumb
--- @chat_ids If not empty, only files from the given chats are considered. Use 0 as chat identifier to delete files not belonging to any chat, for example profile photos -- vector<int53>
--- @exclude_chat_ids If not empty, files from the given chats are exluded. Use 0 as chat identifier to exclude all files not belonging to any chat, for example profile photos
--- @chat_limit Same as in getStorageStatistics. Affects only returned statistics
-function tdbot.optimizeStorage(siz, tt, cnt, immunitydelay, filetypes, chatids, excludechatids, chatlimit, callback, data)
+-- @size Limit on the total size of files after deletion.
+-- Pass -1 to use the default limit
+-- @ttl Limit on the time that has passed since the last time a file was accessed (or creation time for some filesystems).
+-- Pass -1 to use the default limit
+-- @count Limit on the total count of files after deletion.
+-- Pass -1 to use the default limit
+-- @immunity_delay The amount of time after the creation of a file during which it can't be deleted, in seconds.
+-- Pass -1 to use the default value
+-- @file_types If not empty, only files with the given type(s) are considered.
+-- By default, all types except thumbnails, profile photos, stickers and wallpapers are deleted
+-- @chat_ids If not empty, only files from the given chats are considered.
+-- Use 0 as chat identifier to delete files not belonging to any chat (e.g., profile photos)
+-- @exclude_chat_ids If not empty, files from the given chats are excluded.
+-- Use 0 as chat identifier to exclude all files not belonging to any chat (e.g., profile photos)
+-- @chat_limit Same as in getStorageStatistics.
+-- Affects only returned statistics
+-- fileType: None|Animation|Audio|Document|Photo|ProfilePhoto|Secret|Sticker|Thumbnail|Unknown|Video|VideoNote|VoiceNote|Wallpaper|SecretThumbnail
+function tdbot.optimizeStorage(size, ttl, count, immunity_delay, file_type, chat_ids, exclude_chat_ids, chat_limit, callback, data)
+  local file_type = file_type or ''
   assert (tdbot_function ({
-    _ = 'optimizeStorage',
-    size = siz or -1,
-    ttl = tt or -1,
-    count = cnt or -1,
-    immunity_delay = immunitydelay or -1,
-    file_types = {
-      _ = 'fileType' .. filetypes
+    ["@type"] = 'optimizeStorage',
+    size = size or -1,
+    ttl = ttl or -1,
+    count = count or -1,
+    immunity_delay = immunity_delay or -1,
+    file_type = {
+      ["@type"] = 'fileType' .. file_type
     },
-    chat_ids = getVector(chatids),
-    exclude_chat_ids = getVector(excludechatids),
-    chat_limit = chatlimit
+    chat_ids = vectorize(chat_ids),
+    exclude_chat_ids = vectorize(exclude_chat_ids),
+    chat_limit = chat_limit
   }, callback or dl_cb, data))
 end
 
--- Sets current network type.
+-- Sets the current network type.
 -- Can be called before authorization.
--- Call to this method forces reopening of all network connections mitigating delay in switching between different networks, so it should be called whenever network is changed even network type remains the same.
--- Network type is used to check if library can use network at all and for collecting detailed network data usage statistics
--- @type New network type, defaults to networkTypeNone
--- networkType: None | Mobile | MobileRoaming | WiFi | Other
-function tdbot.setNetworkType(network_type, callback, data)
+-- Calling this method forces all network connections to reopen, mitigating the delay in switching between different networks, so it should be called whenever the network is changed, even if the network type remains the same.
+-- Network type is used to check whether the library can use the network at all and also for collecting detailed network data usage statistics
+-- @type The new network type.
+-- By default, networkTypeOther
+-- network: None|Mobile|MobileRoaming|WiFi|Other
+function tdbot.setNetworkType(type, callback, data)
   assert (tdbot_function ({
-    _ = 'setNetworkType',
+    ["@type"] = 'setNetworkType',
     type = {
-      _ = 'networkType' .. network_type
+      ["@type"] = 'networkType' .. type
     },
   }, callback or dl_cb, data))
 end
@@ -2756,40 +3076,35 @@ end
 -- Returns network data usage statistics.
 -- Can be called before authorization
 -- @only_current If true, returns only data for the current library launch
-function tdbot.getNetworkStatistics(onlycurrent, callback, data)
+function tdbot.getNetworkStatistics(only_current, callback, data)
   assert (tdbot_function ({
-    _ = 'getNetworkStatistics',
-    only_current = onlycurrent
+    ["@type"] = 'getNetworkStatistics',
+    only_current = only_current
   }, callback or dl_cb, data))
 end
 
--- Adds specified data to data usage statistics.
+-- Adds the specified data to data usage statistics.
 -- Can be called before authorization
--- @entry Network statistics entry with a data to add to statistics
--- entry: File | Call
--- @sent_bytes Total number of sent bytes
--- @received_bytes Total number of received bytes
--- @file_type Type of a file the data is part of
--- fileType: None | Animation | Audio | Document | Photo | ProfilePhoto | Secret | Sticker | Thumb | Unknown | Video | VideoNote | Voice | Wallpaper | SecretThumb
--- @network_type Type of a network the data was sent through. Call setNetworkType to maintain actual network type
--- networkType: None | Mobile | MobileRoaming | WiFi | Other
--- @sent_bytes Total number of sent bytes
--- @received_bytes Total number of received bytes
-function tdbot.addNetworkStatistics(entri, filetype, networktype, sentbytes, receivedbytes, durasi, callback, data)
+-- @entry The network statistics entry with the data to be added to statistics
+-- entry = File|Call
+-- fileType = None|Animation|Audio|Document|Photo|ProfilePhoto|Secret|Sticker|Thumbnail|Unknown|Video|VideoNote|VoiceNote|Wallpaper|SecretThumbnail
+-- network = None|Mobile|MobileRoaming|WiFi|Other
+function tdbot.addNetworkStatistics(entry, file_type, network, sent_bytes, received_bytes, duration, callback, data)
+  local file_type = file_type or 'None'
   assert (tdbot_function ({
-    _ = 'addNetworkStatistics',
+    ["@type"] = 'addNetworkStatistics',
     entry = {
-      _ = 'networkStatisticsEntry' .. entri,
+      ["@type"] = 'networkStatisticsEntry' .. entry,
       file_type = {
-        _ = 'fileType' .. filetype
+        ["@type"] = 'fileType' .. file_type
       },
       network_type = {
-        _ = 'networkType' .. networktype
+        ["@type"] = 'networkType' .. network
       },
-      sent_bytes = sentbytes,
-      received_bytes = receivedbytes,
-      duration = durasi
-    },
+      sent_bytes = sent_bytes,
+      received_bytes = received_bytes,
+      duration = duration
+    }
   }, callback or dl_cb, data))
 end
 
@@ -2797,494 +3112,579 @@ end
 -- Can be called before authorization
 function tdbot.resetNetworkStatistics(callback, data)
   assert (tdbot_function ({
-    _ = 'resetNetworkStatistics'
+    ["@type"] = 'resetNetworkStatistics'
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Informs server about number of pending bot updates if they aren't processed for a long time
--- @pending_update_count Number of pending updates
--- @error_message Last error's message
-function tdbot.setBotUpdatesStatus(pendingupdatecount, errormessage, callback, data)
+-- Informs the server about the number of pending bot updates if they haven't been processed for a long time; for bots only
+-- @pending_update_count The number of pending updates
+-- @error_message The last error message
+function tdbot.setBotUpdatesStatus(pending_update_count, error_message, callback, data)
   assert (tdbot_function ({
-    _ = 'setBotUpdatesStatus',
-    pending_update_count = pendingupdatecount,
-    error_message = tostring(errormessage)
+    ["@type"] = 'setBotUpdatesStatus',
+    pending_update_count = pending_update_count,
+    error_message = tostring(error_message)
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Uploads a png image with a sticker.
--- Returns uploaded file
+-- Uploads a PNG image with a sticker; for bots only; returns the uploaded file
 -- @user_id Sticker file owner
--- @png_sticker Png image with the sticker, must be up to 512 kilobytes in size and fit in 512x512 square
-function tdbot.uploadStickerFile(userid, pngsticker, callback, data)
+-- @png_sticker PNG image with the sticker; must be up to 512 kB in size and fit in 512x512 square
+function tdbot.uploadStickerFile(user_id, png_sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'uploadStickerFile',
-    user_id = userid,
-    png_sticker = getInputFile(pngsticker)
+    ["@type"] = 'uploadStickerFile',
+    user_id = user_id,
+    png_sticker = getInputFile(png_sticker)
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Creates new sticker set.
--- Returns created sticker set
+-- Creates a new sticker set; for bots only.
+-- Returns the newly created sticker set
 -- @user_id Sticker set owner
--- @title Sticker set title, 1-64 characters
--- @name Sticker set name. Can contain only english letters, digits and underscores. Should end on *'_by_<bot username>'*. *<bot_username>* is case insensitive, 1-64 characters
--- @is_masks True, is stickers are masks
--- @stickers Description of a sticker which should be added to a sticker set
--- @png_sticker Png image with the sticker, must be up to 512 kilobytes in size and fit in 512x512 square
--- @emojis Emojis corresponding to the sticker
--- @mask_position Position where the mask should be placed, nullable
--- @point Part of a face relative to which the mask should be placed. 0 - forehead, 1 - eyes, 2 - mouth, 3 - chin
--- @x_shift Shift by X-axis measured in widths of the mask scaled to the face size, from left to right. For example, choosing -1.0 will place mask just to the left of the default mask position
--- @y_shift Shift by Y-axis measured in heights of the mask scaled to the face size, from top to bottom. For example, 1.0 will place the mask just below the default mask position.
--- @scale Mask scaling coefficient. For example, 2.0 means double size
-function tdbot.createNewStickerSet(userid, title, name, ismasks, pngsticker, emoji, points, x_shifts, y_shifts, scales, callback, data)
+-- @title Sticker set title; 1-64 characters
+-- @name Sticker set name.
+-- Can contain only English letters, digits and underscores.
+-- Must end with *"_by_<bot username>"* (*<bot_username>* is case insensitive); 1-64 characters
+-- @is_masks True, if stickers are masks
+-- @stickers List of stickers to be added to the set
+function tdbot.createNewStickerSet(user_id, title, name, is_masks, stickers, callback, data)
   assert (tdbot_function ({
-    _ = 'createNewStickerSet',
-    user_id = userid,
+    ["@type"] = 'createNewStickerSet',
+    user_id = user_id,
     title = tostring(title),
     name = tostring(name),
-    is_masks = ismasks,
-    stickers = {
-      _ = 'inputSticker',
-      png_sticker = getInputFile(pngsticker),
-      emojis = tostring(emoji),
-      mask_position = {
-        _ = 'maskPosition',
-        point = points,
-        x_shift = x_shifts,
-        y_shift = y_shifts,
-        scale = scales
-      },
-    },
+    is_masks = is_masks,
+    -- stickers = vector<inputSticker>
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Adds new sticker to a set.
+-- Adds a new sticker to a set; for bots only.
 -- Returns the sticker set
 -- @user_id Sticker set owner
 -- @name Sticker set name
 -- @sticker Sticker to add to the set
--- @png_sticker Png image with the sticker, must be up to 512 kilobytes in size and fit in 512x512 square
--- @emojis Emojis corresponding to the sticker
--- @mask_position Position where the mask should be placed, nullable
--- @point Part of a face relative to which the mask should be placed. 0 - forehead, 1 - eyes, 2 - mouth, 3 - chin
--- @x_shift Shift by X-axis measured in widths of the mask scaled to the face size, from left to right. For example, choosing -1.0 will place mask just to the left of the default mask position
--- @y_shift Shift by Y-axis measured in heights of the mask scaled to the face size, from top to bottom. For example, 1.0 will place the mask just below the default mask position.
--- @scale Mask scaling coefficient. For example, 2.0 means double size
-function tdbot.addStickerToSet(userid, name, pngsticker, mpoint, xshift, yshift, mscale, callback, data)
+function tdbot.addStickerToSet(user_id, name, sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'addStickerToSet',
-    user_id = userid,
+    ["@type"] = 'addStickerToSet',
+    user_id = user_id,
     name = tostring(name),
-    sticker = {
-      _ = 'inputSticker',
-      png_sticker = getInputFile(pngsticker),
-      emojis = tostring(emoji),
-      mask_position = {
-        _ = 'maskPosition',
-        point = mpoint,
-        x_shift = xshift,
-        y_shift = yshift,
-        scale = mscale
-      },
-    },
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Changes position of a sticker in the set it belongs to.
--- Sticker set should be created by the bot
--- @sticker The sticker
--- @position New sticker position in the set, zero-based
+-- Changes the position of a sticker in the set to which it belongs; for bots only.
+-- The sticker set must have been created by the bot
+-- @sticker Sticker
+-- @position New position of the sticker in the set, zero-based
 function tdbot.setStickerPositionInSet(sticker, position, callback, data)
   assert (tdbot_function ({
-    _ = 'setStickerPositionInSet',
+    ["@type"] = 'setStickerPositionInSet',
     sticker = getInputFile(sticker),
     position = position
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Deletes a sticker from the set it belongs to.
--- Sticker set should be created by the bot
--- @sticker The sticker
-function tdbot.deleteStickerFromSet(sticker, callback, data)
+-- Removes a sticker from the set to which it belongs; for bots only.
+-- The sticker set must have been created by the bot
+-- @sticker Sticker
+function tdbot.removeStickerFromSet(sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteStickerFromSet',
+    ["@type"] = 'removeStickerFromSet',
     sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Sends custom request
--- @method Method name
+-- Sends a custom request; for bots only
+-- @method The method name
 -- @parameters JSON-serialized method parameters
 function tdbot.sendCustomRequest(method, parameters, callback, data)
   assert (tdbot_function ({
-    _ = 'sendCustomRequest',
+    ["@type"] = 'sendCustomRequest',
     method = tostring(method),
     parameters = tostring(parameters)
   }, callback or dl_cb, data))
 end
 
--- Bots only.
--- Answers a custom query
+-- Answers a custom query; for bots only
 -- @custom_query_id Identifier of a custom query
 -- @data JSON-serialized answer to the query
-function tdbot.answerCustomQuery(customqueryid, data, callback, data)
+function tdbot.answerCustomQuery(custom_query_id, data, callback, data)
   assert (tdbot_function ({
-    _ = 'answerCustomQuery',
-    custom_query_id = customqueryid,
+    ["@type"] = 'answerCustomQuery',
+    custom_query_id = custom_query_id,
     data = tostring(data)
   }, callback or dl_cb, data))
 end
 
--- Returns Ok after specified amount of the time passed.
+-- Succeeds after a specified amount of time has passed.
 -- Can be called before authorization
--- @seconds Number of seconds before that function returns
-function tdbot.setAlarm(sec, callback, data)
+-- @seconds Number of seconds before the function returns
+function tdbot.setAlarm(seconds, callback, data)
   assert (tdbot_function ({
-    _ = 'setAlarm',
-    seconds = sec
+    ["@type"] = 'setAlarm',
+    seconds = seconds
   }, callback or dl_cb, data))
 end
 
--- Returns invite text for invitation of new users
+-- Uses current user IP to found his country.
+-- Returns two-letter ISO 3166-1 alpha-2 country code.
+-- Can be called before authorization
+function tdbot.getCountryCode(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getCountryCode'
+  }, callback or dl_cb, data))
+end
+
+-- Returns the default text for invitation messages to be used as a placeholder when the current user invites friends to Telegram
 function tdbot.getInviteText(callback, data)
   assert (tdbot_function ({
-    _ = 'getInviteText'
+    ["@type"] = 'getInviteText'
   }, callback or dl_cb, data))
 end
 
--- Returns terms of service.
+-- Returns the terms of service.
 -- Can be called before authorization
 function tdbot.getTermsOfService(callback, data)
   assert (tdbot_function ({
-    _ = 'getTermsOfService'
+    ["@type"] = 'getTermsOfService'
   }, callback or dl_cb, data))
 end
 
--- Sets proxy server for network requests.
+-- Sets the proxy server for network requests.
 -- Can be called before authorization
--- @proxy The proxy to use. You can specify null to remove proxy server
--- @server Proxy server ip address
+-- @proxy Proxy server to use.
+-- Specify null to remove the proxy server
+-- @server Proxy server IP address
 -- @port Proxy server port
--- @username Username to log in
--- @password Password to log in
--- proxy: Empty | Socks5
-function tdbot.setProxy(proksi, serv, pport, uname, passwd, callback, data)
+-- @username Username for logging in
+-- @password Password for logging in
+-- proxy = Empty|Socks5
+function tdbot.setProxy(proxy, server, port, username, password, callback, data)
   assert (tdbot_function ({
-    _ = 'setProxy',
+    ["@type"] = 'setProxy',
     proxy = {
-      _ = 'proxy' .. proksi,
-      server = tostring(serv),
-      port = pport,
-      username = tostring(uname),
-      password = tostring(passwd),
-    },
+      ["@type"] = 'proxy' .. proxy,
+      server = server,
+      port = port,
+      username = username,
+      password = password
+    }
   }, callback or dl_cb, data))
 end
 
--- Returns current set up proxy.
+-- Returns the proxy that is currently set up.
 -- Can be called before authorization
 function tdbot.getProxy(callback, data)
   assert (tdbot_function ({
-    _ = 'getProxy'
+    ["@type"] = 'getProxy'
   }, callback or dl_cb, data))
 end
 
--- Text message
--- @text Text to send
--- @disable_web_page_preview Pass true to disable rich preview for link in the message text
--- @clear_draft Pass true if chat draft message should be deleted
--- @entities Bold, Italic, Code, Pre, PreCode and TextUrl entities contained in the text. Non-bot users can't use TextUrl entities. Can't be used with non-null parse_mode -- vector<textEntity>
--- @parse_mode Text parse mode, nullable. Can't be used along with enitities
-function tdbot.sendText(chat_id, reply_to_message_id, text, disable_notification, from_background, reply_markup, disablewebpagepreview, parsemode, cleardraft, entity, callback, data)
-  local input_message_content = {
-    _ = 'inputMessageText',
-    text = tostring(text),
-    disable_web_page_preview = disablewebpagepreview,
-    parse_mode = getParseMode(parsemode),
-    clear_draft = cleardraft,
-    entities = entity
-  }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+-- Does nothing; for testing only
+function tdbot.testCallEmpty(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallEmpty'
+  }, callback or dl_cb, data))
 end
 
--- Animation message
--- @animation Animation file to send
--- @thumb Animation thumb, if available
--- @duration Duration of the animation in seconds
--- @width Width of the animation, may be replaced by the server
--- @height Height of the animation, may be replaced by the server
--- @caption Animation caption, 0-200 characters
-function tdbot.sendAnimation(chat_id, reply_to_message_id, animation_file, aniwidth, aniheight, anicaption, disable_notification, from_background, reply_markup, callback, data)
+-- Returns the received string; for testing only
+-- @x String to return
+function tdbot.testCallString(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallString',
+    x = tostring(x)
+  }, callback or dl_cb, data))
+end
+
+-- Returns the received bytes; for testing only
+-- @x Bytes to return
+function tdbot.testCallBytes(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallBytes',
+    x = x
+  }, callback or dl_cb, data))
+end
+
+-- Returns the received vector of numbers; for testing only
+-- @x Vector of numbers to return
+function tdbot.testCallVectorInt(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallVectorInt',
+    x = vectorize(x)
+  }, callback or dl_cb, data))
+end
+
+-- Returns the received vector of objects containing a number; for testing only
+-- @x Vector of objects to return
+function tdbot.testCallVectorIntObject(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallVectorIntObject',
+    x = vectorize(x)
+  }, callback or dl_cb, data))
+end
+
+-- For testing only request.
+-- Returns the received vector of strings; for testing only
+-- @x Vector of strings to return
+function tdbot.testCallVectorString(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallVectorString',
+    x = vectorize(x)
+  }, callback or dl_cb, data))
+end
+
+-- Returns the received vector of objects containing a string; for testing only
+-- @x Vector of objects to return
+function tdbot.testCallVectorStringObject(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallVectorStringObject',
+    x = vectorize(x)
+  }, callback or dl_cb, data))
+end
+
+-- Returns the squared received number; for testing only
+-- @x Number to square
+function tdbot.testSquareInt(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testSquareInt',
+    x = x
+  }, callback or dl_cb, data))
+end
+
+-- Sends a simple network request to the Telegram servers; for testing only
+function tdbot.testNetwork(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testNetwork'
+  }, callback or dl_cb, data))
+end
+
+-- Forces an updates.getDifference call to the Telegram servers; for testing only
+function tdbot.testGetDifference(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testGetDifference'
+  }, callback or dl_cb, data))
+end
+
+-- Does nothing and ensures that the Update object is used; for testing only
+function tdbot.testUseUpdate(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testUseUpdate'
+  }, callback or dl_cb, data))
+end
+
+-- Does nothing and ensures that the Error object is used; for testing only
+function tdbot.testUseError(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testUseError'
+  }, callback or dl_cb, data))
+end
+
+-- A text message
+-- @text Formatted text to be sent.
+-- Only Bold, Italic, Code, Pre, PreCode and TextUrl entities are allowed to be specified manually
+-- @disable_web_page_preview True, if rich web page previews for URLs in the message text should be disabled
+-- @clear_draft True, if a chat message draft should be deleted
+-- textEntityType = Mention|Hashtag|BotCommand|Url|EmailAddress|Bold|Italic|Code|Pre|PreCode|TextUrl|MentionName
+function tdbot.sendText(chat_id, reply_to_message_id, text, parse_mode, disable_web_page_preview, clear_draft, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageAnimation',
-    animation = getInputFile(animation_file),
-    thumb = inputThumb,
+    ["@type"] = 'inputMessageText',
+    disable_web_page_preview = disable_web_page_preview,
+    text = {text = text},
+    clear_draft = clear_draft
+  }
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
+end
+
+-- An animation message (GIF-style).
+-- @animation Animation file to be sent
+-- @thumbnail Animation thumbnail, if available
+-- @duration Duration of the animation, in seconds
+-- @width Width of the animation; may be replaced by the server
+-- @height Height of the animation; may be replaced by the server
+-- @caption Animation caption; 0-200 characters
+function tdbot.sendAnimation(chat_id, reply_to_message_id, animation, caption, parse_mode, duration, width, height, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
+  local input_message_content = {
+    ["@type"] = 'inputMessageAnimation',
+    animation = getInputFile(animation),
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption},
     duration = duration,
-    width = aniwidth,
-    height = aniheight,
-    caption = tostring(anicaption)
+    width = width,
+    height = height
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
--- Audio message
--- @audio Audio file to send
--- @album_cover_thumb Thumb of the album's cover, if available
--- @duration Duration of the audio in seconds, may be replaced by the server
--- @title Title of the audio, 0-64 characters, may be replaced by the server
--- @performer Performer of the audio, 0-64 characters, may be replaced by the server
--- @caption Audio caption, 0-200 characters
-function tdbot.sendAudio(chat_id, reply_to_message_id, audio, duration, title, performer, caption, disable_notification, from_background, reply_markup, callback, data)
+
+-- An audio message
+-- @audio Audio file to be sent
+-- @album_cover_thumbnail Thumbnail of the cover for the album, if available
+-- @duration Duration of the audio, in seconds; may be replaced by the server
+-- @title Title of the audio; 0-64 characters; may be replaced by the server
+-- @performer Performer of the audio; 0-64 characters, may be replaced by the server
+-- @caption Audio caption; 0-200 characters
+function tdbot.sendAudio(chat_id, reply_to_message_id, audio, caption, parse_mode, duration, title, performer, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageAudio',
+    ["@type"] = 'inputMessageAudio',
     audio = getInputFile(audio),
-    album_cover_thumb = inputThumb,
-    duration = duration or 0,
-    title = tostring(title) or 0,
-    performer = tostring(performer),
-    caption = tostring(caption)
+    album_cover_thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption},
+    duration = duration,
+    title = tostring(title),
+    performer = tostring(performer)
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Document message
--- @document Document to send
--- @thumb Document thumb, if available
--- @caption Document caption, 0-200 characters
-function tdbot.sendDocument(chat_id, document, caption, doc_thumb, reply_to_message_id, disable_notification, from_background, reply_markup, callback, data)
+-- A document message (general file)
+-- @document Document to be sent
+-- @thumbnail Document thumbnail, if available
+-- @caption Document caption; 0-200 characters
+function tdbot.sendDocument(chat_id, reply_to_message_id, document, caption, parse_mode, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageDocument',
+    ["@type"] = 'inputMessageDocument',
     document = getInputFile(document),
-    thumb = doc_thumb, -- inputThumb
-    caption = tostring(caption)
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption}
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Photo message
+-- A photo message
 -- @photo Photo to send
--- @thumb Photo thumb to send, is sent to the other party in secret chats only
--- @added_sticker_file_ids File identifiers of stickers added onto the photo -- vector<int32>
+-- @thumbnail Photo thumbnail to be sent, this is sent to the other party in secret chats only
+-- @added_sticker_file_ids File identifiers of the stickers added to the photo, if applicable
 -- @width Photo width
 -- @height Photo height
--- @caption Photo caption, 0-200 characters
--- @ttl Photo TTL in seconds, 0-60. Non-zero TTL can be only specified in private chats
-function tdbot.sendPhoto(chat_id, reply_to_message_id, photo_file, photo_thumb, addedstickerfileids, photo_width, photo_height, photo_caption, photo_ttl, disable_notification, from_background, reply_markup, callback, data)
+-- @caption Photo caption; 0-200 characters
+-- @ttl Photo TTL (Time To Live), in seconds (0-60). A non-zero TTL can be specified only in private chats
+function tdbot.sendPhoto(chat_id, reply_to_message_id, photo, caption, parse_mode, added_sticker_file_ids, width, height, ttl, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessagePhoto',
-    photo = getInputFile(photo_file),
-    thumb = photo_thumb, -- inputThumb
-    added_sticker_file_ids = getVector(addedstickerfileids),
-    width = photo_width,
-    height = photo_height,
-    caption = tostring(photo_caption),
-    ttl = photo_ttl
+    ["@type"] = 'inputMessagePhoto',
+    photo = getInputFile(photo),
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption},
+    added_sticker_file_ids = vectorize(added_sticker_file_ids),
+    width = width,
+    height = height,
+    ttl = ttl or 0
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Sticker message
--- @sticker Sticker to send
--- @thumb Sticker thumb, if available
+-- A sticker message
+-- @sticker Sticker to be sent
+-- @thumbnail Sticker thumbnail, if available
 -- @width Sticker width
 -- @height Sticker height
-function tdbot.sendSticker(chat_id, reply_to_message_id, sticker_file, sticker_width, sticker_height, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendSticker(chat_id, reply_to_message_id, sticker, width, height, disable_notification, thumbnail, thumb_width, thumb_height, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageSticker',
-    sticker = getInputFile(sticker_file),
-    thumb = sticker_thumb, -- inputThumb
-    width = sticker_width,
-    height = sticker_height
+    ["@type"] = 'inputMessageSticker',
+    sticker = getInputFile(sticker),
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    width = width,
+    height = height
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Video message
--- @video Video to send
--- @thumb Video thumb, if available
--- @added_sticker_file_ids File identifiers of stickers added onto the video -- vector<int32>
--- @duration Duration of the video in seconds
--- @width Video width @height Video height
--- @caption Video caption, 0-200 characters
--- @ttl Video TTL in seconds, 0-60. Non-zero TTL can be only specified in private chats
-function tdbot.sendVideo(chat_id, reply_to_message_id, video_file, vid_thumb, addedstickerfileids, vid_duration, vid_width, vid_height, vid_caption, vid_ttl, disable_notification, from_background, reply_markup, callback, data)
+-- A video message
+-- @video Video to be sent
+-- @thumbnail Video thumbnail, if available
+-- @added_sticker_file_ids File identifiers of the stickers added to the video, if applicable
+-- @duration Duration of the video, in seconds
+-- @width Video width
+-- @height Video height
+-- @caption Video caption; 0-200 characters
+-- @ttl Video TTL (Time To Live), in seconds (0-60). A non-zero TTL can be specified only in private chats
+function tdbot.sendVideo(chat_id, reply_to_message_id, video, caption, parse_mode, added_sticker_file_ids, duration, width, height, ttl, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageVideo',
-    video = getInputFile(video_file),
-    thumb = vid_thumb, -- inputThumb
-    added_sticker_file_ids = getVector(addedstickerfileids),
-    duration = vid_duration or 0,
-    width = vid_width or 0,
-    height = vid_height or 0,
-    caption = tostring(vid_caption),
-    ttl = vid_ttl
+    ["@type"] = 'inputMessageVideo',
+    video = getInputFile(video),
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption},
+    added_sticker_file_ids = vectorize(added_sticker_file_ids),
+    duration = duration,
+    width = width,
+    height = height,
+    ttl = ttl
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Video note message
--- @video_note Video note to send
--- @thumb Video thumb, if available
--- @duration Duration of the video in seconds
--- @length Video width and height, should be positive and not greater than 640
-function tdbot.sendVideoNote(chat_id, reply_to_message_id, videonote, vnote_thumb, vnote_duration, vnote_length, disable_notification, from_background, reply_markup, callback, data)
+-- A video note message
+-- @video_note Video note to be sent
+-- @thumbnail Video thumbnail, if available
+-- @duration Duration of the video, in seconds
+-- @length Video width and height; must be positive and not greater than 640
+function tdbot.sendVideoNote(chat_id, reply_to_message_id, videonote, duration, length, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageVideoNote',
+    ["@type"] = 'inputMessageVideoNote',
     video_note = getInputFile(videonote),
-    thumb = vidnote_thumb, -- inputThumb
-    duration = vnote_duration,
-    length = vnote_length
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    duration = duration,
+    length = length
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Voice message
--- @voice Voice file to send
--- @duration Duration of the voice in seconds
--- @waveform Waveform representation of the voice in 5-bit format
--- @caption Voice caption, 0-200 characters
-function tdbot.sendVoice(chat_id, reply_to_message_id, voice_file, voi_duration, voi_waveform, voi_caption, disable_notification, from_background, reply_markup, callback, data)
+-- A voice note message
+-- @voice_note Voice note to be sent
+-- @duration Duration of the voice note, in seconds
+-- @waveform Waveform representation of the voice note, in 5-bit format
+-- @caption Voice note caption; 0-200 characters
+function tdbot.sendVoiceNote(chat_id, reply_to_message_id, voice_note, caption, parse_mode, duration, waveform, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageVoice',
-    voice = getInputFile(voice_file),
-    duration = voi_duration or 0,
-    waveform = voi_waveform,
-    caption = tostring(voi_caption)
+    ["@type"] = 'inputMessageVoiceNote',
+    voice_note = getInputFile(voice_note),
+    caption = {text = caption},
+    duration = duration,
+    waveform = waveform
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Message with location
--- @location Location to send
--- @latitude Latitude of location in degrees as defined by sender
--- @longitude Longitude of location in degrees as defined by sender
-function tdbot.sendLocation(chat_id, reply_to_message_id, lat, lon, disable_notification, from_background, reply_markup, callback, data)
+-- A message with a location
+-- @location Location to be sent
+-- @live_period Period for which the location can be updated, in seconds; should bebetween 60 and 86400 for a live location and 0 otherwise
+function tdbot.sendLocation(chat_id, reply_to_message_id, latitude, longitude, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageLocation',
+    ["@type"] = 'inputMessageLocation',
     location = {
-      _ = 'location',
-      latitude = lat,
-      longitude = lon
+      ["@type"] = 'location',
+      latitude = latitude,
+      longitude = longitude
     },
+    live_period = liveperiod
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Message with information about venue
+-- A message with information about a venue
 -- @venue Venue to send
--- @location Venue location as defined by sender
--- @title Venue name as defined by sender
--- @address Venue address as defined by sender
--- @provider Provider of venue database as defined by sender. Only 'foursquare' need to be supported currently
-function tdbot.sendVenue(chat_id, reply_to_message_id, lat, lon, ven_title, ven_address, ven_provider, ven_id, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendVenue(chat_id, reply_to_message_id, latitude, longitude, title, address, provider, id, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageVenue',
+    ["@type"] = 'inputMessageVenue',
     venue = {
-      _ = 'venue',
+      ["@type"] = 'venue',
       location = {
-        _ = 'location',
-        latitude = lat,
-        longitude = lon
+        ["@type"] = 'location',
+        latitude = latitude,
+        longitude = longitude
       },
-      title = tostring(ven_title),
-      address = tostring(ven_address),
-      provider = tostring(ven_provider) or 'foursquare',
-      id = tostring(ven_id)
-    },
+      title = tostring(title),
+      address = tostring(address),
+      provider = tostring(provider),
+      id = tostring(id)
+    }
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- User contact message
+-- A message containing a user contact
 -- @contact Contact to send
--- @phone_number User's phone number
--- @first_name User first name, 1-255 characters
--- @last_name User last name
--- @user_id User identifier if known, 0 otherwise
-function tdbot.sendContact(chat_id, reply_to_message_id, phonenumber, firstname, lastname, userid, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendContact(chat_id, reply_to_message_id, phone_number, first_name, last_name, user_id, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageContact',
+    ["@type"] = 'inputMessageContact',
     contact = {
-      _ = 'contact',
-      phone_number = tostring(phonenumber),
-      first_name = tostring(firstname),
-      last_name = tostring(lastname),
-      user_id = userid
-    },
+      ["@type"] = 'contact',
+      phone_number = tostring(phone_number),
+      first_name = tostring(first_name),
+      last_name = tostring(last_name),
+      user_id = user_id
+    }
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- @bot_user_id User identifier of a bot owned the game
--- @game_short_name Game short name
-function tdbot.sendGame(chat_id, reply_to_message_id, botuserid, gameshortname, disable_notification, from_background, reply_markup, callback, data)
+-- A message with a game; not supported for channels or secret chats
+-- @bot_user_id User identifier of the bot that owns the game
+-- @game_short_name Short name of the game
+function tdbot.sendGame(chat_id, reply_to_message_id, bot_user_id, gameshortname, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageGame',
-    bot_user_id = botuserid,
+    ["@type"] = 'inputMessageGame',
+    bot_user_id = bot_user_id,
     game_short_name = tostring(gameshortname)
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Message with an invoice, can be used only by bots and in private chats only
--- @invoice The invoice
--- @title Product title, 1-32 characters
--- @param_description Product description, 0-255 characters
--- @photo_url Goods photo URL, optional
--- @photo_size Goods photo size
--- @photo_width Goods photo width
--- @photo_height Goods photo height
--- @payload Invoice payload
--- @provider_token Payments provider token
--- @start_parameter Unique invoice bot start_parameter for generation of this invoice
-function tdbot.sendInvoice(chat_id, reply_to_message_id, the_invoice, inv_title, inv_desc, photourl, photosize, photowidth, photoheight, inv_payload, providertoken, startparameter, disable_notification, from_background, reply_markup, callback, data)
+-- A message with an invoice; can be used only by bots and only in private chats
+-- @invoice Invoice
+-- @title Product title; 1-32 characters
+-- @param_description Product description; 0-255 characters
+-- @photo_url Product photo URL; optional
+-- @photo_size Product photo size
+-- @photo_width Product photo width
+-- @photo_height Product photo height
+-- @payload The invoice payload
+-- @provider_token Payment provider token
+-- @provider_data JSON-encoded data about the invoice, which will be shared with the payment provider
+-- @start_parameter Unique invoice bot start_parameter for the generation of this invoice
+function tdbot.sendInvoice(chat_id, reply_to_message_id, invoice, title, description, photo_url, photo_size, photo_width, photo_height, payload, provider_token, provider_data, start_parameter, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageInvoice',
-    invoice = the_invoice,
-    -- invoice = {
-      -- _ = 'invoice',
-      -- currency = tostring(currency),
-      -- prices = prices, -- vector<labeledPrice>
-      -- is_test = is_test,
-      -- need_name = need_name,
-      -- need_phone_number = need_phone_number,
-      -- need_email = need_email,
-      -- need_shipping_address = need_shipping_address,
-      -- is_flexible = is_flexible
-    -- },
-    title = tostring(inv_title),
-    description = tostring(inv_desc),
-    photo_url = tostring(photourl),
-    photo_size = photosize,
-    photo_width = photowidth,
-    photo_height = photoheight,
-    payload = inv_payload,
-    provider_token = tostring(providertoken),
-    start_parameter = tostring(startparameter)
+    ["@type"] = 'inputMessageInvoice',
+    invoice = invoice,
+    title = tostring(title),
+    description = tostring(description),
+    photo_url = tostring(photo_url),
+    photo_size = photo_size,
+    photo_width = photo_width,
+    photo_height = photo_height,
+    payload = payload,
+    provider_token = tostring(provider_token),
+    provider_data = tostring(provider_data),
+    start_parameter = tostring(start_parameter)
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
--- Forwarded message
--- @from_chat_id Chat identifier of the message to forward
+-- A forwarded message
+-- @from_chat_id Identifier for the chat this forwarded message came from
 -- @message_id Identifier of the message to forward
--- @in_game_share Pass true to share a game message within a launched game, for Game messages only
-function tdbot.sendForwarded(chat_id, reply_to_message_id, fromchatid, messageid, ingameshare, disable_notification, from_background, reply_markup, callback, data)
+-- @in_game_share True, if a game message should be shared within a launched game; applies only to game messages
+function tdbot.sendForwarded(chat_id, reply_to_message_id, from_chat_id, message_id, ingameshare, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageForwarded',
-    from_chat_id = fromchatid,
-    message_id = messageid,
+    ["@type"] = 'inputMessageForwarded',
+    from_chat_id = from_chat_id,
+    message_id = message_id,
     in_game_share = ingameshare
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
 return tdbot

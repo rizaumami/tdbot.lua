@@ -6,6 +6,7 @@
 # Script to create a tdbot.lua basic structure from Telegram library file
 #
 # HOW
+# - Get td_api.tl file from td's repo: td/td/generate/scheme/td_api.tl
 # - Put this script and tl file(s) in a same directory
 # - Run this script, e.g by execute this command: ./tl2lua
 # - Lua file(s) with similar name to tl file(s) will then be generated
@@ -29,79 +30,144 @@ HEADER="--[[
 
 local tdbot = {}
 
+-- Does nothing, suppress 'lua: attempt to call a nil value' warning
 function dl_cb(arg, data)
 end
 
 -- Type of chats:
--- @chat_id = user, group, channel, and broadcast
--- @group_id = normal group
--- @channel_id = channel and broadcast
+-- @chat_id = users, basic groups, supergroups, channels and secret chats
+-- @basicgroup_id = basic groups
+-- @supergroup_id = supergroups and channels
 local function getChatId(chat_id)
   local chat = {}
   local chat_id = tostring(chat_id)
 
   if chat_id:match('^-100') then
-    local channel_id = chat_id:gsub('-100', '')
-    chat = {id = channel_id, type = 'channel'}
+    local supergroup_id = string.sub(chat_id, 5)
+    chat = {id = supergroup_id, type = 'supergroup'}
   else
-    local group_id = chat_id:gsub('-', '')
-    chat = {id = group_id, type = 'group'}
+    local basicgroup_id = string.sub(chat_id, 2)
+    chat = {id = basicgroup_id, type = 'basicgroup'}
   end
 
   return chat
 end
 
-local function getInputFile(file, conversion_str, expectedsize)
+-- Get points to a file
+local function getInputFile(file, conversion_str, expected_size)
   local input = tostring(file)
   local infile = {}
 
   if (conversion_str and expectedsize) then
     infile = {
-      _ = 'inputFileGenerated',
+      ["@type"] = 'inputFileGenerated',
       original_path = tostring(file),
       conversion = tostring(conversion_str),
-      expected_size = expectedsize
+      expected_size = expected_size
     }
   else
     if input:match('/') then
-      infile = {_ = 'inputFileLocal', path = file}
+      infile = {["@type"] = 'inputFileLocal', path = file}
     elseif input:match('^%d+$') then
-      infile = {_ = 'inputFileId', id = file}
+      infile = {["@type"] = 'inputFileId', id = file}
     else
-      infile = {_ = 'inputFilePersistentId', persistent_id = file}
+      infile = {["@type"] = 'inputFileRemote', id = file}
     end
   end
 
   return infile
 end
 
--- User can send bold, italic, and monospace text uses HTML or Markdown format.
+tdbot.getInputFile = getInputFile
+
+-- Get the way the text should be parsed for TextEntities
 local function getParseMode(parse_mode)
   local P = {}
   if parse_mode then
     local mode = parse_mode:lower()
 
     if mode == 'markdown' or mode == 'md' then
-      P._ = 'textParseModeMarkdown'
+      P["@type"] = 'textParseModeMarkdown'
     elseif mode == 'html' then
-      P._ = 'textParseModeHTML'
+      P["@type"] = 'textParseModeHTML'
     end
   end
-
   return P
 end
 
--- (Temporary) workaround for currently buggy telegram-bot's vector
+-- Parses Bold, Italic, Code, Pre, PreCode and TextUrl entities contained in the text.
+-- This is an offline method.
+-- May be called before authorization.
+-- Can be called synchronously
+-- @text The text which should be parsed
+-- @parse_mode Text parse mode
+local function parseTextEntities(text, parse_mode, dl_cb, data)
+  assert (tdbot_function ({
+    ["@type"] = 'parseTextEntities',
+    text = tostring(text),
+    parse_mode = getParseMode(parse_mode)
+  }, dl_cb, data))
+end
+
+tdbot.parseTextEntities = parseTextEntities
+
+-- Sends a message.
+-- Returns the sent message
+-- @chat_id Target chat
+-- @reply_to_message_id Identifier of the message to reply to or 0
+-- @disable_notification Pass true to disable notification for the message. Not supported in secret chats
+-- @from_background Pass true if the message is sent from the background
+-- @reply_markup Markup for replying to the message; for bots only
+-- @input_message_content The content of the message to be sent
+local function sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, dl_cb, data)
+  local tdbody = {
+    ["@type"] = 'sendMessage',
+    chat_id = chat_id,
+    reply_to_message_id = reply_to_message_id or 0,
+    disable_notification = disable_notification or 0,
+    from_background = from_background or 1,
+    reply_markup = reply_markup,
+    input_message_content = input_message_content
+  }
+  if parse_mode then
+    local text = input_message_content.text and input_message_content.text.text or input_message_content.caption.text
+    parseTextEntities(text, parse_mode, function(a, d)
+      if a.tdbody.input_message_content.text then
+        a.tdbody.input_message_content.text = d
+      else
+        a.tdbody.input_message_content.caption = d
+      end
+      assert (tdbot_function (a.tdbody, dl_cb, data))
+    end, {tdbody = tdbody})
+  else
+    assert (tdbot_function (tdbody, dl_cb, data))
+  end
+end
+
+tdbot.sendMessage = sendMessage
+
+-- Set limit.
+local function setLimit(limit, num)
+  local limit = tonumber(limit)
+  local number = tonumber(num or limit)
+
+  return (number >= limit) and limit or number
+end
+
+
+-- (Temporary) workaround for currently buggy tdbot's vector
 -- This will return lua array from strings:
 -- - {one, two, three}
 -- - {[0] = one, two, three}
 -- - {[0] = one, [1] = two, [2] = three}
-local function getVector(str)
+local function vectorize(str)
   local v = {}
   local i = 1
 
-  for k in string.gmatch(str, '(%d%d%d+)') do
-    v[i] = '[' .. i-1 .. ']=\"' .. k .. '\"'
+  if not str then return v end
+
+  for k in string.gmatch(str, '(-?%d+)') do
+    v[i] = '[' .. i-1 .. ']="' .. k .. '"'
     i = i+1
   end
   v = table.concat(v, ',')
@@ -144,12 +210,12 @@ while read -r tl; do
   };1' "$tdbot"
 
   awk -i inplace '/^[[:alpha:]][[:alpha:]]/{
-    $1="    _ = '\''"$1"'\''"
+    $1="    [\"@type\"] = '\''"$1"'\''"
   };1' "$tdbot"
 
   awk -i inplace '{
     gsub(/^-- function/, "function")
-    gsub(/    _ = '\''end'\''/, "end")
+    gsub(/    \["@type"\] = '\''end'\''/, "end")
     gsub(/,'\''/, "'\'',")
     gsub(/\( /, "(")
     gsub(/=string/, " = tostring()")
@@ -184,4 +250,4 @@ while read -r tl; do
 
   # notify user if conversion has been finished
   printf '%s\n' " -- $tdbot has been successfully created."
-done < <(find . -type f -iname "telegram-bot*.tl")
+done < <(find . -type f -iname "td_api.tl")

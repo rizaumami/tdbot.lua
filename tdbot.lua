@@ -13,7 +13,7 @@
   along with this program; if not, write to the Free Software
   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
   MA 02110-1301, USA.
-]]--
+--]]
 
 local tdbot = {}
 
@@ -25,39 +25,41 @@ local function getChatId(chat_id)
   local chat_id = tostring(chat_id)
 
   if chat_id:match('^-100') then
-    local channel_id = chat_id:gsub('-100', '')
-    chat = {id = channel_id, type = 'channel'}
+    local supergroup_id = string.sub(chat_id, 5)
+    chat = {id = supergroup_id, type = 'supergroup'}
   else
-    local group_id = chat_id:gsub('-', '')
-    chat = {id = group_id, type = 'group'}
+    local basicgroup_id = string.sub(chat_id, 2)
+    chat = {id = basicgroup_id, type = 'basicgroup'}
   end
 
   return chat
 end
 
-local function getInputFile(file, conversion_str, expectedsize)
+local function getInputFile(file, conversion_str, expected_size)
   local input = tostring(file)
   local infile = {}
 
   if (conversion_str and expectedsize) then
     infile = {
-      _ = 'inputFileGenerated',
+      ["@type"] = 'inputFileGenerated',
       original_path = tostring(file),
       conversion = tostring(conversion_str),
-      expected_size = expectedsize
+      expected_size = expected_size
     }
   else
     if input:match('/') then
-      infile = {_ = 'inputFileLocal', path = file}
+      infile = {["@type"] = 'inputFileLocal', path = file}
     elseif input:match('^%d+$') then
-      infile = {_ = 'inputFileId', id = file}
+      infile = {["@type"] = 'inputFileId', id = file}
     else
-      infile = {_ = 'inputFilePersistentId', persistent_id = file}
+      infile = {["@type"] = 'inputFileRemote', id = file}
     end
   end
 
   return infile
 end
+
+tdbot.getInputFile = getInputFile
 
 local function getParseMode(parse_mode)
   local P = {}
@@ -65,20 +67,66 @@ local function getParseMode(parse_mode)
     local mode = parse_mode:lower()
 
     if mode == 'markdown' or mode == 'md' then
-      P._ = 'textParseModeMarkdown'
+      P["@type"] = 'textParseModeMarkdown'
     elseif mode == 'html' then
-      P._ = 'textParseModeHTML'
+      P["@type"] = 'textParseModeHTML'
     end
   end
-
   return P
 end
 
-local function getVector(str)
+local function parseTextEntities(text, parse_mode, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'parseTextEntities',
+    text = tostring(text),
+    parse_mode = getParseMode(parse_mode)
+  }, callback or dl_cb, data))
+end
+
+tdbot.parseTextEntities = parseTextEntities
+
+local function sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
+  local tdbody = {
+    ["@type"] = 'sendMessage',
+    chat_id = chat_id,
+    reply_to_message_id = reply_to_message_id or 0,
+    disable_notification = disable_notification or 0,
+    from_background = from_background or 1,
+    reply_markup = reply_markup,
+    input_message_content = input_message_content
+  }
+  if parse_mode then
+    local text = input_message_content.text and input_message_content.text.text or input_message_content.caption.text
+    parseTextEntities(text, parse_mode, function(a, d)
+      if a.tdbody.input_message_content.text then
+        a.tdbody.input_message_content.text = d
+      else
+        a.tdbody.input_message_content.caption = d
+      end
+      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
+    end, {tdbody = tdbody})
+  else
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
+  end
+end
+
+tdbot.sendMessage = sendMessage
+
+local function setLimit(limit, num)
+  local limit = tonumber(limit)
+  local number = tonumber(num or limit)
+
+  return (number >= limit) and limit or number
+end
+
+
+local function vectorize(str)
   local v = {}
   local i = 1
 
-  for k in string.gmatch(str, '(%d%d%d+)') do
+  if not str then return v end
+
+  for k in string.gmatch(str, '(-?%d+)') do
     v[i] = '[' .. i-1 .. ']="' .. k .. '"'
     i = i+1
   end
@@ -86,132 +134,181 @@ local function getVector(str)
   return load('return {' .. v .. '}')()
 end
 
-function tdbot.getAuthState(callback, data)
+function tdbot.getAuthorizationState(callback, data)
   assert (tdbot_function ({
-    _ = 'getAuthState'
+    ["@type"] = 'getAuthorizationState'
   }, callback or dl_cb, data))
 end
 
-function tdbot.setAuthPhoneNumber(phonenumber, allowflashcall, iscurrentphonenumber, callback, data)
+function tdbot.setTdlibParameters(use_test_dc, database_directory, files_directory, use_file_database, use_chat_info_database, use_message_database, use_secret_chats, api_id, api_hash, system_language_code, device_model, system_version, application_version, enable_storage_optimizer, ignore_file_names, callback, data)
   assert (tdbot_function ({
-    _ = 'setAuthPhoneNumber',
-    phone_number = tostring(),
-    allow_flash_call = allowflashcall,
-    is_current_phone_number = iscurrentphonenumber
+    ["@type"] = 'setTdlibParameters',
+    parameters = {
+      ["@type"] = 'tdlibParameters',
+      use_test_dc = use_test_dc,
+      database_directory = tostring(database_directory),
+      files_directory = tostring(files_directory),
+      use_file_database = use_file_database,
+      use_chat_info_database = use_chat_info_database,
+      use_message_database = use_message_database,
+      use_secret_chats = use_secret_chats,
+      api_id = api_id,
+      api_hash = tostring(api_hash),
+      system_language_code = tostring(system_language_code),
+      device_model = tostring(device_model),
+      system_version = tostring(system_version),
+      application_version = tostring(application_version),
+      enable_storage_optimizer = enable_storage_optimizer,
+      ignore_file_names = ignore_file_names
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.resendAuthCode(callback, data)
+function tdbot.checkDatabaseEncryptionKey(encryption_key, callback, data)
   assert (tdbot_function ({
-    _ = 'resendAuthCode'
+    ["@type"] = 'checkDatabaseEncryptionKey',
+    encryption_key = encryption_key
   }, callback or dl_cb, data))
 end
 
-function tdbot.checkAuthCode(cod, firstname, lastname, callback, data)
+function tdbot.setAuthenticationPhoneNumber(phone_number, allow_flash_call, is_current_phone_number, callback, data)
   assert (tdbot_function ({
-    _ = 'checkAuthCode',
-    code = tostring(cod),
-    first_name = tostring(firstname),
-    last_name = tostring(lastname)
+    ["@type"] = 'setAuthenticationPhoneNumber',
+    phone_number = tostring(phone_number),
+    allow_flash_call = allow_flash_call,
+    is_current_phone_number = is_current_phone_number
   }, callback or dl_cb, data))
 end
 
-function tdbot.checkAuthPassword(passwd, callback, data)
+function tdbot.resendAuthenticationCode(callback, data)
   assert (tdbot_function ({
-    _ = 'checkAuthPassword',
-    password = tostring(passwd)
+    ["@type"] = 'resendAuthenticationCode'
   }, callback or dl_cb, data))
 end
 
-function tdbot.requestAuthPasswordRecovery(callback, data)
+function tdbot.checkAuthenticationCode(code, first_name, last_name, callback, data)
   assert (tdbot_function ({
-    _ = 'requestAuthPasswordRecovery'
+    ["@type"] = 'checkAuthenticationCode',
+    code = tostring(code),
+    first_name = tostring(first_name),
+    last_name = tostring(last_name)
   }, callback or dl_cb, data))
 end
 
-function tdbot.recoverAuthPassword(recoverycode, callback, data)
+function tdbot.checkAuthenticationPassword(password, callback, data)
   assert (tdbot_function ({
-    _ = 'recoverAuthPassword',
-    recovery_code = tostring(recoverycode)
+    ["@type"] = 'checkAuthenticationPassword',
+    password = tostring(password)
   }, callback or dl_cb, data))
 end
 
-function tdbot.resetAuth(force, callback, data)
+function tdbot.requestAuthenticationPasswordRecovery(callback, data)
   assert (tdbot_function ({
-    _ = 'resetAuth',
-    force = force
+    ["@type"] = 'requestAuthenticationPasswordRecovery'
   }, callback or dl_cb, data))
 end
 
-function tdbot.checkAuthBotToken(token, callback, data)
+function tdbot.recoverAuthenticationPassword(recovery_code, callback, data)
   assert (tdbot_function ({
-    _ = 'checkAuthBotToken',
+    ["@type"] = 'recoverAuthenticationPassword',
+    recovery_code = tostring(recovery_code)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.checkAuthenticationBotToken(token, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'checkAuthenticationBotToken',
     token = tostring(token)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.logOut(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'logOut'
+  }, callback or dl_cb, data))
+end
+
+function tdbot.close(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'close'
+  }, callback or dl_cb, data))
+end
+
+function tdbot.destroy(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'destroy'
+  }, callback or dl_cb, data))
+end
+
+function tdbot.setDatabaseEncryptionKey(new_encryption_key, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setDatabaseEncryptionKey',
+    new_encryption_key = new_encryption_key
   }, callback or dl_cb, data))
 end
 
 function tdbot.getPasswordState(callback, data)
   assert (tdbot_function ({
-    _ = 'getPasswordState'
+    ["@type"] = 'getPasswordState'
   }, callback or dl_cb, data))
 end
 
-function tdbot.setPassword(oldpassword, newpassword, newhint, setrecoveryemail, newrecoveryemail, callback, data)
+function tdbot.setPassword(old_password, new_password, new_hint, set_recovery_email_address, new_recovery_email_address, callback, data)
   assert (tdbot_function ({
-    _ = 'setPassword',
-    old_password = tostring(oldpassword),
-    new_password = tostring(newpassword),
-    new_hint = tostring(newhint),
-    set_recovery_email = setrecoveryemail,
-    new_recovery_email = tostring(newrecoveryemail)
+    ["@type"] = 'setPassword',
+    old_password = tostring(old_password),
+    new_password = tostring(new_password),
+    new_hint = tostring(new_hint),
+    set_recovery_email_address = set_recovery_email_address,
+    new_recovery_email_address = tostring(new_recovery_email_address)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getRecoveryEmail(passwd, callback, data)
+function tdbot.getRecoveryEmailAddress(password, callback, data)
   assert (tdbot_function ({
-    _ = 'getRecoveryEmail',
-    password = tostring(passwd)
+    ["@type"] = 'getRecoveryEmailAddress',
+    password = tostring(password)
   }, callback or dl_cb, data))
 end
 
-function tdbot.setRecoveryEmail(passwd, newrecoveryemail, callback, data)
+function tdbot.setRecoveryEmailAddress(password, new_recovery_email_address, callback, data)
   assert (tdbot_function ({
-    _ = 'setRecoveryEmail',
-    password = tostring(passwd),
-    new_recovery_email = tostring(newrecoveryemail)
+    ["@type"] = 'setRecoveryEmailAddress',
+    password = tostring(password),
+    new_recovery_email_address = tostring(new_recovery_email_address)
   }, callback or dl_cb, data))
 end
 
 function tdbot.requestPasswordRecovery(callback, data)
   assert (tdbot_function ({
-    _ = 'requestPasswordRecovery'
+    ["@type"] = 'requestPasswordRecovery'
   }, callback or dl_cb, data))
 end
 
-function tdbot.recoverPassword(recoverycode, callback, data)
+function tdbot.recoverPassword(recovery_code, callback, data)
   assert (tdbot_function ({
-    _ = 'recoverPassword',
-    recovery_code = tostring(recoverycode)
+    ["@type"] = 'recoverPassword',
+    recovery_code = tostring(recovery_code)
   }, callback or dl_cb, data))
 end
 
-function tdbot.createTemporaryPassword(passwd, validfor, callback, data)
+function tdbot.createTemporaryPassword(password, valid_for, callback, data)
   assert (tdbot_function ({
-    _ = 'createTemporaryPassword',
-    password = tostring(passwd),
-    valid_for = validfor
+    ["@type"] = 'createTemporaryPassword',
+    password = tostring(password),
+    valid_for = valid_for
   }, callback or dl_cb, data))
 end
 
 function tdbot.getTemporaryPasswordState(callback, data)
   assert (tdbot_function ({
-    _ = 'getTemporaryPasswordState'
+    ["@type"] = 'getTemporaryPasswordState'
   }, callback or dl_cb, data))
 end
 
 function tdbot.processDcUpdate(dc, addr, callback, data)
   assert (tdbot_function ({
-    _ = 'processDcUpdate',
+    ["@type"] = 'processDcUpdate',
     dc = tostring(dc),
     addr = tostring(addr)
   }, callback or dl_cb, data))
@@ -219,2018 +316,2271 @@ end
 
 function tdbot.getMe(callback, data)
   assert (tdbot_function ({
-    _ = 'getMe'
+    ["@type"] = 'getMe'
   }, callback or dl_cb, data))
 end
 
-function tdbot.getUser(userid, callback, data)
+function tdbot.getUser(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getUser',
-    user_id = userid
+    ["@type"] = 'getUser',
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getUserFull(userid, callback, data)
+function tdbot.getUserFullInfo(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getUserFull',
-    user_id = userid
+    ["@type"] = 'getUserFullInfo',
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getGroup(groupid, callback, data)
+function tdbot.getBasicGroup(basic_group_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getGroup',
-    group_id = getChatId(groupid).id
+    ["@type"] = 'getBasicGroup',
+    basic_group_id = getChatId(basic_group_id).id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getGroupFull(groupid, callback, data)
+function tdbot.getBasicGroupFullInfo(basic_group_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getGroupFull',
-    group_id = getChatId(groupid).id
+    ["@type"] = 'getBasicGroupFullInfo',
+    basic_group_id = getChatId(basic_group_id).id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChannel(channelid, callback, data)
+function tdbot.getSupergroup(supergroup_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChannel',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'getSupergroup',
+    supergroup_id = getChatId(supergroup_id).id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChannelFull(channelid, callback, data)
+function tdbot.getSupergroupFullInfo(supergroup_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChannelFull',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'getSupergroupFullInfo',
+    supergroup_id = getChatId(supergroup_id).id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getSecretChat(secretchatid, callback, data)
+function tdbot.getSecretChat(secret_chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getSecretChat',
-    secret_chat_id = secretchatid
+    ["@type"] = 'getSecretChat',
+    secret_chat_id = secret_chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChat(chatid, callback, data)
+function tdbot.getChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChat',
-    chat_id = chatid
+    ["@type"] = 'getChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getMessage(chatid, messageid, callback, data)
+function tdbot.getMessage(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getMessage',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'getMessage',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getMessages(chatid, messageids, callback, data)
+function tdbot.getRepliedMessage(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getMessages',
-    chat_id = chatid,
-    message_ids = getVector(messageids)
+    ["@type"] = 'getRepliedMessage',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getFile(fileid, callback, data)
+function tdbot.getChatPinnedMessage(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getFile',
-    file_id = fileid
+    ["@type"] = 'getChatPinnedMessage',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getFilePersistent(persistentfileid, filetype, callback, data)
+function tdbot.getMessages(chat_id, message_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'getFilePersistent',
-    persistent_file_id = tostring(persistentfileid),
-    file_type = FileType
+    ["@type"] = 'getMessages',
+    chat_id = chat_id,
+    message_ids = vectorize(message_ids)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChats(offsetorder, offsetchatid, lim, callback, data)
+function tdbot.getFile(file_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChats',
-    offset_order = offsetorder,
-    offset_chat_id = offsetchatid,
-    limit = lim
+    ["@type"] = 'getFile',
+    file_id = file_id
+  }, callback or dl_cb, data))
+end
+
+function tdbot.getRemoteFile(remote_file_id, file_type, callback, data)
+  local file_type = file_type or 'Unknown'
+  assert (tdbot_function ({
+    ["@type"] = 'getRemoteFile',
+    remote_file_id = tostring(remote_file_id),
+    file_type = {
+      ["@type"] = 'fileType' .. file_type
+    }
+  }, callback or dl_cb, data))
+end
+
+function tdbot.getChats(offset_chat_id, limit, offset_order, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getChats',
+    offset_order = offset_order or '9223372036854775807',
+    offset_chat_id = offset_chat_id or 0,
+    limit = limit or 20
   }, callback or dl_cb, data))
 end
 
 function tdbot.searchPublicChat(username, callback, data)
   assert (tdbot_function ({
-    _ = 'searchPublicChat',
+    ["@type"] = 'searchPublicChat',
     username = tostring(username)
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchPublicChats(usernameprefix, callback, data)
+function tdbot.searchPublicChats(query, callback, data)
   assert (tdbot_function ({
-    _ = 'searchPublicChats',
-    username_prefix = tostring(usernameprefix)
+    ["@type"] = 'searchPublicChats',
+    query = tostring(query)
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchChats(query, lim, callback, data)
+function tdbot.searchChats(query, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchChats',
+    ["@type"] = 'searchChats',
     query = tostring(query),
-    limit = lim
+    limit = limit
   }, callback or dl_cb, data))
 end
 
-function tdbot.getTopChats(cat, lim, callback, data)
+function tdbot.searchChatsOnServer(query, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getTopChats',
+    ["@type"] = 'searchChatsOnServer',
+    query = tostring(query),
+    limit = limit
+  }, callback or dl_cb, data))
+end
+
+function tdbot.getTopChats(category, limit, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getTopChats',
     category = {
-      _ = 'topChatCategory' .. cat
+      ["@type"] = 'topChatCategory' .. category
     },
-    limit = lim
+    limit = setLimit(30, limit)
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteTopChat(cat, chatid, callback, data)
+function tdbot.removeTopChat(category, chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteTopChat',
+    ["@type"] = 'removeTopChat',
     category = {
-      _ = 'topChatCategory' .. cat
+      ["@type"] = 'topChatCategory' .. category
     },
-    chat_id = chatid
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.addRecentlyFoundChat(chatid, callback, data)
+function tdbot.addRecentlyFoundChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'addRecentlyFoundChat',
-    chat_id = chatid
+    ["@type"] = 'addRecentlyFoundChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteRecentlyFoundChat(chatid, callback, data)
+function tdbot.removeRecentlyFoundChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteRecentlyFoundChat',
-    chat_id = chatid
+    ["@type"] = 'removeRecentlyFoundChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteRecentlyFoundChats(callback, data)
+function tdbot.clearRecentlyFoundChats(callback, data)
   assert (tdbot_function ({
-    _ = 'deleteRecentlyFoundChats'
+    ["@type"] = 'clearRecentlyFoundChats'
   }, callback or dl_cb, data))
 end
 
-function tdbot.getCommonChats(userid, offsetchatid, lim, callback, data)
+function tdbot.checkChatUsername(chat_id, username, callback, data)
   assert (tdbot_function ({
-    _ = 'getCommonChats',
-    user_id = userid,
-    offset_chat_id = offsetchatid,
-    limit = lim
+    ["@type"] = 'checkChatUsername',
+    chat_id = chat_id,
+    username = tostring(username)
   }, callback or dl_cb, data))
 end
 
 function tdbot.getCreatedPublicChats(callback, data)
   assert (tdbot_function ({
-    _ = 'getCreatedPublicChats'
+    ["@type"] = 'getCreatedPublicChats'
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChatHistory(chatid, frommessageid, off, lim, onlylocal, callback, data)
+function tdbot.getGroupsInCommon(user_id, offset_chat_id, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getChatHistory',
-    chat_id = chatid,
-    from_message_id = frommessageid,
-    offset = off,
-    limit = lim,
-    only_local = onlylocal
+    ["@type"] = 'getGroupsInCommon',
+    user_id = user_id,
+    offset_chat_id = offset_chat_id or 0,
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteChatHistory(chatid, removefromchatlist, callback, data)
+function tdbot.getChatHistory(chat_id, from_message_id, offset, limit, only_local, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteChatHistory',
-    chat_id = chatid,
-    remove_from_chat_list = removefromchatlist
+    ["@type"] = 'getChatHistory',
+    chat_id = chat_id,
+    from_message_id = from_message_id,
+    offset = offset,
+    limit = setLimit(100, limit),
+    only_local = only_local
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchChatMessages(chatid, query, senderuserid, frommessageid, off, lim, searchmessagesfilter, callback, data)
+function tdbot.deleteChatHistory(chat_id, remove_from_chat_list, callback, data)
   assert (tdbot_function ({
-    _ = 'searchChatMessages',
-    chat_id = chatid,
+    ["@type"] = 'deleteChatHistory',
+    chat_id = chat_id,
+    remove_from_chat_list = remove_from_chat_list
+  }, callback or dl_cb, data))
+end
+
+function tdbot.searchChatMessages(chat_id, query, filter, sender_user_id, from_message_id, offset, limit, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'searchChatMessages',
+    chat_id = chat_id,
     query = tostring(query),
-    sender_user_id = senderuserid,
-    from_message_id = frommessageid,
-    offset = off,
-    limit = lim,
+    sender_user_id = sender_user_id or 0,
+    from_message_id = from_message_id or 0,
+    offset = offset or 0,
+    limit = setLimit(100, limit),
     filter = {
-      _ = 'searchMessagesFilter' .. searchmessagesfilter,
-    },
+      ["@type"] = 'searchMessagesFilter' .. filter
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchMessages(query, offsetdate, offsetchatid, offsetmessageid, lim, callback, data)
+function tdbot.searchMessages(query, offset_date, offset_chat_id, offset_message_id, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchMessages',
+    ["@type"] = 'searchMessages',
     query = tostring(query),
-    offset_date = offsetdate,
-    offset_chat_id = offsetchatid,
-    offset_message_id = offsetmessageid,
-    limit = lim
+    offset_date = offset_date or 0,
+    offset_chat_id = offset_chat_id or 0,
+    offset_message_id = offset_message_id or 0,
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchSecretMessages(chatid, query, fromsearchid, lim, searchmessagesfilter, callback, data)
+function tdbot.searchSecretMessages(chat_id, query, from_search_id, limit, filter, callback, data)
   assert (tdbot_function ({
-    _ = 'searchSecretMessages',
-    chat_id = chatid,
+    ["@type"] = 'searchSecretMessages',
+    chat_id = chat_id or 0,
     query = tostring(query),
-    from_search_id = fromsearchid,
-    limit = lim,
+    from_search_id = from_search_id or 0,
+    limit = setLimit(100, limit),
     filter = {
-      _ = 'searchMessagesFilter' .. searchmessagesfilter,
-    },
+      ["@type"] = 'searchMessagesFilter' .. filter
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchCallMessages(frommessageid, lim, onlymissed, callback, data)
+function tdbot.searchCallMessages(from_message_id, limit, only_missed, callback, data)
   assert (tdbot_function ({
-    _ = 'searchCallMessages',
-    from_message_id = frommessageid,
-    limit = lim,
-    only_missed = onlymissed
+    ["@type"] = 'searchCallMessages',
+    from_message_id = from_message_id or 0,
+    limit = setLimit(100, limit),
+    only_missed = only_missed
   }, callback or dl_cb, data))
 end
 
-function tdbot.getPublicMessageLink(chatid, messageid, callback, data)
+function tdbot.searchChatRecentLocationMessages(chat_id, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getPublicMessageLink',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'searchChatRecentLocationMessages',
+    chat_id = chat_id,
+    limit = limit
   }, callback or dl_cb, data))
 end
 
-local function sendMessage(chatid, replytomessageid, InputMessageContent, disablenotification, frombackground, replymarkup, callback, data)
+function tdbot.getActiveLiveLocationMessages(callback, data)
   assert (tdbot_function ({
-    _ = 'sendMessage',
-    chat_id = chatid,
-    reply_to_message_id = replytomessageid,
-    disable_notification = disablenotification or 0,
-    from_background = frombackground or 1,
-    reply_markup = replymarkup,
-    input_message_content = InputMessageContent
+    ["@type"] = 'getActiveLiveLocationMessages'
   }, callback or dl_cb, data))
 end
 
-tdbot.sendMessage = sendMessage
-
-function tdbot.sendBotStartMessage(botuserid, chatid, parameter, callback, data)
+function tdbot.getChatMessageByDate(chat_id, date, callback, data)
   assert (tdbot_function ({
-    _ = 'sendBotStartMessage',
-    bot_user_id = botuserid,
-    chat_id = chatid,
+    ["@type"] = 'getChatMessageByDate',
+    chat_id = chat_id,
+    date = date
+  }, callback or dl_cb, data))
+end
+
+function tdbot.getPublicMessageLink(chat_id, message_id, for_album, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getPublicMessageLink',
+    chat_id = chat_id,
+    message_id = message_id,
+    for_album = for_album
+  }, callback or dl_cb, data))
+end
+
+function tdbot.sendMessageAlbum(chat_id, reply_to_message_id, input_message_contents, disable_notification, from_background, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'sendMessageAlbum',
+    chat_id = chat_id,
+    reply_to_message_id = reply_to_message_id or 0,
+    disable_notification = disable_notification,
+    from_background = from_background,
+    input_message_contents = vectorize(input_message_contents)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.sendBotStartMessage(bot_user_id, chat_id, parameter, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'sendBotStartMessage',
+    bot_user_id = bot_user_id,
+    chat_id = chat_id,
     parameter = tostring(parameter)
   }, callback or dl_cb, data))
 end
 
-function tdbot.sendInlineQueryResultMessage(chatid, replytomessageid, disablenotification, frombackground, queryid, resultid, callback, data)
+function tdbot.sendInlineQueryResultMessage(chat_id, reply_to_message_id, disable_notification, from_background, query_id, result_id, callback, data)
   assert (tdbot_function ({
-    _ = 'sendInlineQueryResultMessage',
-    chat_id = chatid,
-    reply_to_message_id = replytomessageid,
-    disable_notification = disablenotification,
-    from_background = frombackground,
-    query_id = queryid,
-    result_id = tostring(resultid)
+    ["@type"] = 'sendInlineQueryResultMessage',
+    chat_id = chat_id,
+    reply_to_message_id = reply_to_message_id,
+    disable_notification = disable_notification,
+    from_background = from_background,
+    query_id = query_id,
+    result_id = tostring(result_id)
   }, callback or dl_cb, data))
 end
 
-function tdbot.forwardMessages(chatid, fromchatid, messageids, disablenotification, frombackground, callback, data)
+function tdbot.forwardMessages(chat_id, from_chat_id, message_ids, disable_notification, from_background, as_album, callback, data)
   assert (tdbot_function ({
-    _ = 'forwardMessages',
-    chat_id = chatid,
-    from_chat_id = fromchatid,
-    message_ids = getVector(messageids),
-    disable_notification = disablenotification,
-    from_background = frombackground
+    ["@type"] = 'forwardMessages',
+    chat_id = chat_id,
+    from_chat_id = from_chat_id,
+    message_ids = vectorize(message_ids),
+    disable_notification = disable_notification,
+    from_background = from_background,
+    as_album = as_album
   }, callback or dl_cb, data))
 end
 
-function tdbot.sendChatSetTtlMessage(chatid, seconds, callback, data)
+function tdbot.sendChatSetTtlMessage(chat_id, ttl, callback, data)
   assert (tdbot_function ({
-    _ = 'sendChatSetTtlMessage',
-    chat_id = chatid,
-    ttl = seconds
+    ["@type"] = 'sendChatSetTtlMessage',
+    chat_id = chat_id,
+    ttl = ttl
   }, callback or dl_cb, data))
 end
 
-function tdbot.editMessageReplyMarkup(chatid, messageid, replymarkup, callback, data)
+function tdbot.sendChatScreenshotTakenNotification(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'editMessageReplyMarkup',
-    chat_id = chatid,
-    message_id = messageid,
-    reply_markup = replymarkup
+    ["@type"] = 'sendChatScreenshotTakenNotification',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.editInlineMessageText(inlinemessageid, replymarkup, inputmessagecontent, callback, data)
+function tdbot.deleteMessages(chat_id, message_ids, revoke, callback, data)
   assert (tdbot_function ({
-    _ = 'editInlineMessageText',
-    inline_message_id = tostring(inlinemessageid),
-    reply_markup = replymarkup,
-    input_message_content = InputMessageContent
+    ["@type"] = 'deleteMessages',
+    chat_id = chat_id,
+    message_ids = vectorize(message_ids),
+    revoke = revoke
   }, callback or dl_cb, data))
 end
 
-function tdbot.editInlineMessageCaption(inlinemessageid, replymarkup, caption, callback, data)
+function tdbot.deleteChatMessagesFromUser(chat_id, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'editInlineMessageCaption',
-    inline_message_id = tostring(inlinemessageid),
-    reply_markup = replymarkup,
-    caption = tostring(caption)
+    ["@type"] = 'deleteChatMessagesFromUser',
+    chat_id = chat_id,
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.editInlineMessageReplyMarkup(inlinemessageid, replymarkup, callback, data)
-  assert (tdbot_function ({
-    _ = 'editInlineMessageReplyMarkup',
-    inline_message_id = tostring(inlinemessageid),
-    reply_markup = replymarkup
-  }, callback or dl_cb, data))
-end
-
-function tdbot.answerInlineQuery(inlinequeryid, ispersonal, results, cachetime, nextoffset, switchpmtext, switchpmparameter, callback, data)
-  assert (tdbot_function ({
-    _ = 'answerInlineQuery',
-    inline_query_id = inlinequeryid,
-    is_personal = ispersonal,
-    results = results,
-    cache_time = cachetime,
-    next_offset = tostring(nextoffset),
-    switch_pm_text = tostring(switchpmtext),
-    switch_pm_parameter = tostring(switchpmparameter)
-  }, callback or dl_cb, data))
-end
-
-function tdbot.sendChatScreenshotTakenNotification(chatid, callback, data)
-  assert (tdbot_function ({
-    _ = 'sendChatScreenshotTakenNotification',
-    chat_id = chatid
-  }, callback or dl_cb, data))
-end
-
-function tdbot.deleteMessages(chatid, messageids, revok, callback, data)
-  assert (tdbot_function ({
-    _ = 'deleteMessages',
-    chat_id = chatid,
-    message_ids = getVector(messageids),
-    revoke = revok
-  }, callback or dl_cb, data))
-end
-
-function tdbot.deleteMessagesFromUser(chatid, userid, callback, data)
-  assert (tdbot_function ({
-    _ = 'deleteMessagesFromUser',
-    chat_id = chatid,
-    user_id = userid
-  }, callback or dl_cb, data))
-end
-
-function tdbot.editMessageText(chatid, messageid, replymarkup, teks, disablewebpagepreview, cleardraft, entity, textparsemode, callback, data)
-  assert (tdbot_function ({
-    _ = 'editMessageText',
-    chat_id = chatid,
-    message_id = messageid,
-    reply_markup = replymarkup,
+function tdbot.editMessageText(chat_id, message_id, text, parse_mode, disable_web_page_preview, clear_draft, reply_markup, callback, data)
+  local tdbody = {
+    ["@type"] = 'editMessageText',
+    chat_id = chat_id,
+    message_id = message_id,
+    reply_markup = reply_markup,
     input_message_content = {
-      _ = 'inputMessageText',
-      text = tostring(teks),
-      disable_web_page_preview = disablewebpagepreview,
-      clear_draft = cleardraft,
-      entities = entity,
-      parse_mode = getParseMode(textparsemode)
-    },
+      ["@type"] = 'inputMessageText',
+      disable_web_page_preview = disable_web_page_preview,
+      text = {text = text},
+      clear_draft = clear_draft
+    }
+  }
+  if parse_mode then
+    parseTextEntities(text, parse_mode, function(a, d)
+      a.tdbody.input_message_content.text = d
+      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
+    end, {tdbody = tdbody})
+  else
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
+  end
+end
+
+function tdbot.editMessageLiveLocation(chat_id, message_id, latitude, longitude, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editMessageLiveLocation',
+    chat_id = chat_id,
+    message_id = message_id,
+    reply_markup = reply_markup,
+    location = {
+      ["@type"] = 'location',
+      latitude = latitude,
+      longitude = longitude
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.editMessageCaption(chatid, messageid, replymarkup, capt, callback, data)
+function tdbot.editMessageCaption(chat_id, message_id, caption, reply_markup, callback, data)
   assert (tdbot_function ({
-    _ = 'editMessageCaption',
-    chat_id = chatid,
-    message_id = messageid,
-    reply_markup = replymarkup,
-    caption = tostring(capt)
+    ["@type"] = 'editMessageCaption',
+    chat_id = chat_id,
+    message_id = message_id,
+    reply_markup = reply_markup,
+    caption = {
+      ["@type"] = 'formattedText',
+      text = tostring(caption)
+    }
+  }, callback or dl_cb, data))
+end
+
+function tdbot.editMessageReplyMarkup(chat_id, message_id, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editMessageReplyMarkup',
+    chat_id = chat_id,
+    message_id = message_id,
+    reply_markup = reply_markup
+  }, callback or dl_cb, data))
+end
+
+function tdbot.editInlineMessageText(inline_message_id, reply_markup, input_message_content, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editInlineMessageText',
+    inline_message_id = tostring(inline_message_id),
+    reply_markup = reply_markup,
+    input_message_content = input_message_content
+  }, callback or dl_cb, data))
+end
+
+function tdbot.editInlineMessageLiveLocation(inline_message_id, latitude, longitude, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editInlineMessageLiveLocation',
+    inline_message_id = tostring(inline_message_id),
+    reply_markup = reply_markup,
+    location = {
+      ["@type"] = 'location',
+      latitude = latitude,
+      longitude = longitude
+    }
+  }, callback or dl_cb, data))
+end
+
+function tdbot.editInlineMessageCaption(inline_message_id, caption, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editInlineMessageCaption',
+    inline_message_id = tostring(inline_message_id),
+    reply_markup = reply_markup,
+    caption = {
+      ["@type"] = 'formattedText',
+      text = tostring(caption)
+    }
+  }, callback or dl_cb, data))
+end
+
+function tdbot.editInlineMessageReplyMarkup(inline_message_id, reply_markup, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'editInlineMessageReplyMarkup',
+    inline_message_id = tostring(inline_message_id),
+    reply_markup = reply_markup
   }, callback or dl_cb, data))
 end
 
 function tdbot.getTextEntities(text, callback, data)
   assert (tdbot_function ({
-    _ = 'getTextEntities',
+    ["@type"] = 'getTextEntities',
     text = tostring(text)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getFileMimeType(filename, callback, data)
+function tdbot.getFileMimeType(file_name, callback, data)
   assert (tdbot_function ({
-    _ = 'getFileMimeType',
-    file_name = tostring(filename)
+    ["@type"] = 'getFileMimeType',
+    file_name = tostring(file_name)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getFileExtension(mimetype, callback, data)
+function tdbot.getFileExtension(mime_type, callback, data)
   assert (tdbot_function ({
-    _ = 'getFileExtension',
-    mime_type = tostring(mimetype)
+    ["@type"] = 'getFileExtension',
+    mime_type = tostring(mime_type)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getInlineQueryResults(botuserid, chatid, lat, lon, query, off, callback, data)
+function tdbot.getInlineQueryResults(bot_user_id, chat_id, latitude, longitude, query, offset, callback, data)
   assert (tdbot_function ({
-    _ = 'getInlineQueryResults',
-    bot_user_id = botuserid,
-    chat_id = chatid,
+    ["@type"] = 'getInlineQueryResults',
+    bot_user_id = bot_user_id,
+    chat_id = chat_id,
     user_location = {
-      _ = 'location',
-      latitude = lat,
-      longitude = lon
+      ["@type"] = 'location',
+      latitude = latitude,
+      longitude = longitude
     },
     query = tostring(query),
-    offset = tostring(off)
+    offset = tostring(offset)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getCallbackQueryAnswer(chatid, messageid, query_payload, cb_query_payload, callback, data)
-  local callback_query_payload = {}
-
-  if query_payload == 'Data' then
-    callback_query_payload.data = cb_query_payload
-  elseif query_payload == 'Game' then
-    callback_query_payload.game_short_name = cb_query_payload
-  end
-
-  callback_query_payload._ = 'callbackQueryPayload' .. query_payload,
-
+function tdbot.answerInlineQuery(inline_query_id, is_personal, results, cache_time, next_offset, switch_pm_text, switch_pm_parameter, callback, data)
   assert (tdbot_function ({
-    _ = 'getCallbackQueryAnswer',
-    chat_id = chatid,
-    message_id = messageid,
-    payload = callback_query_payload
+    ["@type"] = 'answerInlineQuery',
+    inline_query_id = inline_query_id,
+    is_personal = is_personal,
+    --results = vector<InputInlineQueryResult>,
+    cache_time = cache_time,
+    next_offset = tostring(next_offset),
+    switch_pm_text = tostring(switch_pm_text),
+    switch_pm_parameter = tostring(switch_pm_parameter)
   }, callback or dl_cb, data))
 end
 
-function tdbot.answerCallbackQuery(callbackqueryid, text, showalert, url, cachetime, callback, data)
+function tdbot.getCallbackQueryAnswer(chat_id, message_id, payload, data, game_short_name, callback, data)
   assert (tdbot_function ({
-    _ = 'answerCallbackQuery',
-    callback_query_id = callbackqueryid,
+    ["@type"] = 'getCallbackQueryAnswer',
+    chat_id = chat_id,
+    message_id = message_id,
+    payload = {
+      ["@type"] = 'callbackQueryPayload' .. payload,
+      data = data,
+      game_short_name = game_short_name
+    }
+  }, callback or dl_cb, data))
+end
+
+function tdbot.answerCallbackQuery(callback_query_id, text, show_alert, url, cache_time, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'answerCallbackQuery',
+    callback_query_id = callback_query_id,
     text = tostring(text),
-    show_alert = showalert,
+    show_alert = show_alert,
     url = tostring(url),
-    cache_time = cachetime
+    cache_time = cache_time
   }, callback or dl_cb, data))
 end
 
-function tdbot.answerShippingQuery(shippingqueryid, shippingoptions, errormessage, callback, data)
+function tdbot.answerShippingQuery(shipping_query_id, shipping_options, error_message, callback, data)
   assert (tdbot_function ({
-    _ = 'answerShippingQuery',
-    shipping_query_id = shippingqueryid,
-    shipping_options = shippingoptions,
-    error_message = tostring(errormessage)
+    ["@type"] = 'answerShippingQuery',
+    shipping_query_id = shipping_query_id,
+    -- shipping_options = vector<shippingOption>,
+    error_message = tostring(error_message)
   }, callback or dl_cb, data))
 end
 
-function tdbot.answerPreCheckoutQuery(precheckoutqueryid, errormessage, callback, data)
+function tdbot.answerPreCheckoutQuery(pre_checkout_query_id, error_message, callback, data)
   assert (tdbot_function ({
-    _ = 'answerPreCheckoutQuery',
-    pre_checkout_query_id = precheckoutqueryid,
-    error_message = tostring(errormessage)
+    ["@type"] = 'answerPreCheckoutQuery',
+    pre_checkout_query_id = pre_checkout_query_id,
+    error_message = tostring(error_message)
   }, callback or dl_cb, data))
 end
 
-function tdbot.setGameScore(chatid, messageid, editmessage, userid, score, force, callback, data)
+function tdbot.setGameScore(chat_id, message_id, edit_message, user_id, score, force, callback, data)
   assert (tdbot_function ({
-    _ = 'setGameScore',
-    chat_id = chatid,
-    message_id = messageid,
-    edit_message = editmessage,
-    user_id = userid,
+    ["@type"] = 'setGameScore',
+    chat_id = chat_id,
+    message_id = message_id,
+    edit_message = edit_message,
+    user_id = user_id,
     score = score,
     force = force
   }, callback or dl_cb, data))
 end
 
-function tdbot.setInlineGameScore(inlinemessageid, editmessage, userid, score, force, callback, data)
+function tdbot.setInlineGameScore(inline_message_id, edit_message, user_id, score, force, callback, data)
   assert (tdbot_function ({
-    _ = 'setInlineGameScore',
-    inline_message_id = tostring(inlinemessageid),
-    edit_message = editmessage,
-    user_id = userid,
+    ["@type"] = 'setInlineGameScore',
+    inline_message_id = tostring(inline_message_id),
+    edit_message = edit_message,
+    user_id = user_id,
     score = score,
     force = force
   }, callback or dl_cb, data))
 end
 
-function tdbot.getGameHighScores(chatid, messageid, userid, callback, data)
+function tdbot.getGameHighScores(chat_id, message_id, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getGameHighScores',
-    chat_id = chatid,
-    message_id = messageid,
-    user_id = userid
+    ["@type"] = 'getGameHighScores',
+    chat_id = chat_id,
+    message_id = message_id,
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getInlineGameHighScores(inlinemessageid, userid, callback, data)
+function tdbot.getInlineGameHighScores(inline_message_id, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getInlineGameHighScores',
-    inline_message_id = tostring(inlinemessageid),
-    user_id = userid
+    ["@type"] = 'getInlineGameHighScores',
+    inline_message_id = tostring(inline_message_id),
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteChatReplyMarkup(chatid, messageid, callback, data)
+function tdbot.deleteChatReplyMarkup(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteChatReplyMarkup',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'deleteChatReplyMarkup',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.sendChatAction(chatid, act, uploadprogress, callback, data)
+function tdbot.sendChatAction(chat_id, action, progress, callback, data)
   assert (tdbot_function ({
-    _ = 'sendChatAction',
-    chat_id = chatid,
+    ["@type"] = 'sendChatAction',
+    chat_id = chat_id,
     action = {
-      _ = 'chatAction' .. act,
-      progress = uploadprogress
-    },
+      ["@type"] = 'chatAction' .. action,
+      progress = progress or 100
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.openChat(chatid, callback, data)
+function tdbot.openChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'openChat',
-    chat_id = chatid
+    ["@type"] = 'openChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.closeChat(chatid, callback, data)
+function tdbot.closeChat(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'closeChat',
-    chat_id = chatid
+    ["@type"] = 'closeChat',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.viewMessages(chatid, messageids, callback, data)
+function tdbot.viewMessages(chat_id, message_ids, force_read, callback, data)
   assert (tdbot_function ({
-    _ = 'viewMessages',
-    chat_id = chatid,
-    message_ids = getVector(messageids)
+    ["@type"] = 'viewMessages',
+    chat_id = chat_id,
+    message_ids = vectorize(message_ids),
+    force_read = force_read
   }, callback or dl_cb, data))
 end
 
-function tdbot.openMessageContent(chatid, messageid, callback, data)
+function tdbot.openMessageContent(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'openMessageContent',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'openMessageContent',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.createPrivateChat(userid, callback, data)
+function tdbot.readAllChatMentions(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'createPrivateChat',
-    user_id = userid
+    ["@type"] = 'readAllChatMentions',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.createGroupChat(groupid, callback, data)
+function tdbot.createPrivateChat(user_id, force, callback, data)
   assert (tdbot_function ({
-    _ = 'createGroupChat',
-    group_id = getChatId(groupid).id
+    ["@type"] = 'createPrivateChat',
+    user_id = user_id,
+    force = force
   }, callback or dl_cb, data))
 end
 
-function tdbot.createChannelChat(channelid, callback, data)
+function tdbot.createBasicGroupChat(basic_group_id, force, callback, data)
   assert (tdbot_function ({
-    _ = 'createChannelChat',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'createBasicGroupChat',
+    basic_group_id = getChatId(basic_group_id).id,
+    force = force
   }, callback or dl_cb, data))
 end
 
-function tdbot.createSecretChat(secretchatid, callback, data)
+function tdbot.createSupergroupChat(supergroup_id, force, callback, data)
   assert (tdbot_function ({
-    _ = 'createSecretChat',
-    secret_chat_id = secretchatid
+    ["@type"] = 'createSupergroupChat',
+    supergroup_id = getChatId(supergroup_id).id,
+    force = force
   }, callback or dl_cb, data))
 end
 
-function tdbot.createNewGroupChat(userids, chattitle, callback, data)
+function tdbot.createSecretChat(secret_chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'createNewGroupChat',
-    user_ids = getVector(userids),
-    title = tostring(chattitle)
+    ["@type"] = 'createSecretChat',
+    secret_chat_id = secret_chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.createNewChannelChat(title, issupergroup, channelldescription, callback, data)
+function tdbot.createNewBasicGroupChat(user_ids, title, callback, data)
   assert (tdbot_function ({
-    _ = 'createNewChannelChat',
-    title = tostring(title),
-    is_supergroup = issupergroup,
-    description = tostring(channelldescription)
-  }, callback or dl_cb, data))
-end
-
-function tdbot.createNewSecretChat(userid, callback, data)
-  assert (tdbot_function ({
-    _ = 'createNewSecretChat',
-    user_id = userid
-  }, callback or dl_cb, data))
-end
-
-function tdbot.migrateGroupChatToChannelChat(chatid, callback, data)
-  assert (tdbot_function ({
-    _ = 'migrateGroupChatToChannelChat',
-    chat_id = chatid
-  }, callback or dl_cb, data))
-end
-
-function tdbot.changeChatTitle(chatid, title, callback, data)
-  assert (tdbot_function ({
-    _ = 'changeChatTitle',
-    chat_id = chatid,
+    ["@type"] = 'createNewBasicGroupChat',
+    user_ids = vectorize(user_ids),
     title = tostring(title)
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeChatPhoto(chatid, foto, callback, data)
+function tdbot.createNewSupergroupChat(title, is_channel, description, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChatPhoto',
-    chat_id = chatid,
-    photo = getInputFile(foto)
+    ["@type"] = 'createNewSupergroupChat',
+    title = tostring(title),
+    is_channel = is_channel,
+    description = tostring(description)
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeChatDraftMessage(chatid, replytomessageid, teks, disablewebpagepreview, cleardraft, entity, parsemode, callback, data)
+function tdbot.createNewSecretChat(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChatDraftMessage',
-    chat_id = chatid,
+    ["@type"] = 'createNewSecretChat',
+    user_id = tonumber(user_id)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.upgradeBasicGroupChatToSupergroupChat(chat_id, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'upgradeBasicGroupChatToSupergroupChat',
+    chat_id = chat_id
+  }, callback or dl_cb, data))
+end
+
+function tdbot.setChatTitle(chat_id, title, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setChatTitle',
+    chat_id = chat_id,
+    title = tostring(title)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.setChatPhoto(chat_id, photo, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setChatPhoto',
+    chat_id = chat_id,
+    photo = getInputFile(photo)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.setChatDraftMessage(chat_id, reply_to_message_id, text, parse_mode, disable_web_page_preview, clear_draft, callback, data)
+  local tdbody = {
+    ["@type"] = 'setChatDraftMessage',
+    chat_id = chat_id,
     draft_message = {
-      _ = 'draftMessage',
-      reply_to_message_id = replytomessageid,
+      ["@type"] = 'draftMessage',
+      reply_to_message_id = reply_to_message_id,
       input_message_text = {
-        _ = 'inputMessageText',
-        text = tostring(teks),
-        disable_web_page_preview = disablewebpagepreview,
-        clear_draft = cleardraft,
-        entities = entity,
-        parse_mode = getParseMode(parsemode)
-      },
-    },
-  }, callback or dl_cb, data))
+        ["@type"] = 'inputMessageText',
+        disable_web_page_preview = disable_web_page_preview,
+        text = {text = text},
+        clear_draft = clear_draft
+      }
+    }
+  }
+  if parse_mode then
+    parseTextEntities(text, parse_mode, function(a, d)
+      a.tdbody.draft_message.input_message_text.text = d
+      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
+    end, {tdbody = tdbody})
+  else
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
+  end
 end
 
-function tdbot.toggleChatIsPinned(chatid, ispinned, callback, data)
+function tdbot.toggleChatIsPinned(chat_id, is_pinned, callback, data)
   assert (tdbot_function ({
-    _ = 'toggleChatIsPinned',
-    chat_id = chatid,
-    is_pinned = ispinned
+    ["@type"] = 'toggleChatIsPinned',
+    chat_id = chat_id,
+    is_pinned = is_pinned
   }, callback or dl_cb, data))
 end
 
-function tdbot.setChatClientData(chatid, clientdata, callback, data)
+function tdbot.setChatClientData(chat_id, client_data, callback, data)
   assert (tdbot_function ({
-    _ = 'setChatClientData',
-    chat_id = chatid,
-    client_data = tostring(clientdata)
+    ["@type"] = 'setChatClientData',
+    chat_id = chat_id,
+    client_data = tostring(client_data)
   }, callback or dl_cb, data))
 end
 
-function tdbot.addChatMember(chatid, userid, forwardlimit, callback, data)
+function tdbot.addChatMember(chat_id, user_id, forward_limit, callback, data)
   assert (tdbot_function ({
-    _ = 'addChatMember',
-    chat_id = chatid,
-    user_id = userid,
-    forward_limit = forwardlimit
+    ["@type"] = 'addChatMember',
+    chat_id = chat_id,
+    user_id = user_id,
+    forward_limit = setLimit(300, forward_limit)
   }, callback or dl_cb, data))
 end
 
-function tdbot.addChatMembers(chatid, userids, callback, data)
+function tdbot.addChatMembers(chat_id, user_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'addChatMembers',
-    chat_id = chatid,
-    user_ids = getVector(userids),
+    ["@type"] = 'addChatMembers',
+    chat_id = chat_id,
+    user_ids = vectorize(user_ids)
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeChatMemberStatus(chatid, userid, rank, right, callback, data)
+function tdbot.setChatMemberStatus(chat_id, user_id, status, right, callback, data)
   local chat_member_status = {}
-
-  if rank == 'Administrator' then
+  local right = right and vectorize(right) or {}
+  if status == 'Creator' then
     chat_member_status = {
-      can_be_edited = right[1] or 1,
-      can_change_info = right[2] or 1,
-      can_post_messages = right[3] or 1,
-      can_edit_messages = right[4] or 1,
-      can_delete_messages = right[5] or 1,
-      can_invite_users = right[6] or 1,
-      can_restrict_members = right[7] or 1,
-      can_pin_messages = right[8] or 1,
-      can_promote_members = right[9] or 1
+      is_member = right[0] or 1
     }
-  elseif rank == 'Restricted' then
+  elseif status == 'Administrator' then
     chat_member_status = {
-      is_member = right[1] or 1,
-      restricted_until_date = right[2] or 0,
-      can_send_messages = right[3] or 1,
-      can_send_media_messages = right[4] or 1,
-      can_send_other_messages = right[5] or 1,
-      can_add_web_page_previews = right[6] or 1
+      can_be_edited = right[0] or 1,
+      can_change_info = right[1] or 1,
+      can_post_messages = right[2] or 1,
+      can_edit_messages = right[3] or 1,
+      can_delete_messages = right[4] or 1,
+      can_invite_users = right[5] or 1,
+      can_restrict_members = right[6] or 1,
+      can_pin_messages = right[7] or 1,
+      can_promote_members = right[8] or 0
     }
-  elseif rank == 'Banned' then
+  elseif status == 'Restricted' then
     chat_member_status = {
-      banned_until_date = right[1] or 0
+      is_member = right[0] or 1,
+      restricted_until_date = right[1] or 0,
+      can_send_messages = right[2] or 1,
+      can_send_media_messages = right[3] or 1,
+      can_send_other_messages = right[4] or 1,
+      can_add_web_page_previews = right[5] or 1
+    }
+  elseif status == 'Banned' then
+    chat_member_status = {
+      banned_until_date = right[0] or 0
     }
   end
-
-  chat_member_status._ = 'chatMemberStatus' .. rank
-
+  chat_member_status["@type"] = 'chatMemberStatus' .. status
   assert (tdbot_function ({
-    _ = 'changeChatMemberStatus',
-    chat_id = chatid,
-    user_id = userid,
+    ["@type"] = 'setChatMemberStatus',
+    chat_id = chat_id,
+    user_id = user_id,
     status = chat_member_status
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChatMember(chatid, userid, callback, data)
+function tdbot.getChatMember(chat_id, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChatMember',
-    chat_id = chatid,
-    user_id = userid
+    ["@type"] = 'getChatMember',
+    chat_id = chat_id,
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchChatMembers(chatid, query, lim, callback, data)
+function tdbot.searchChatMembers(chat_id, query, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchChatMembers',
-    chat_id = chatid,
+    ["@type"] = 'searchChatMembers',
+    chat_id = chat_id,
     query = tostring(query),
-    limit = lim
+    limit = limit
   }, callback or dl_cb, data))
 end
 
-function tdbot.setPinnedChats(chatids, callback, data)
+function tdbot.getChatAdministrators(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'setPinnedChats',
-    chat_ids = getVector(chatids)
+    ["@type"] = 'getChatAdministrators',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.downloadFile(fileid, priorities, callback, data)
+function tdbot.setPinnedChats(chat_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'downloadFile',
-    file_id = fileid,
-    priority = priorities
+    ["@type"] = 'setPinnedChats',
+    chat_ids = vectorize(chat_ids)
   }, callback or dl_cb, data))
 end
 
-function tdbot.cancelDownloadFile(fileid, callback, data)
+function tdbot.downloadFile(file_id, priority, callback, data)
   assert (tdbot_function ({
-    _ = 'cancelDownloadFile',
-    file_id = fileid
+    ["@type"] = 'downloadFile',
+    file_id = file_id,
+    priority = priority or 32
   }, callback or dl_cb, data))
 end
 
-function tdbot.uploadFile(filetoupload, filetype, prior, callback, data)
+function tdbot.cancelDownloadFile(file_id, only_if_pending, callback, data)
   assert (tdbot_function ({
-    _ = 'uploadFile',
-    file = getInputFile(filetoupload),
+    ["@type"] = 'cancelDownloadFile',
+    file_id = file_id,
+    only_if_pending = only_if_pending
+  }, callback or dl_cb, data))
+end
+
+function tdbot.uploadFile(file, file_type, priority, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'uploadFile',
+    file = getInputFile(file),
     file_type = {
-      _ = 'fileType' .. filetype,
+      ["@type"] = 'fileType' .. file_type
     },
-    priority = prior
+    priority = priority or 32
   }, callback or dl_cb, data))
 end
 
-function tdbot.cancelUploadFile(fileid, callback, data)
+function tdbot.cancelUploadFile(file_id, callback, data)
   assert (tdbot_function ({
-    _ = 'cancelUploadFile',
-    file_id = fileid
+    ["@type"] = 'cancelUploadFile',
+    file_id = file_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.setFileGenerationProgress(generationid, size, localsize, callback, data)
+function tdbot.setFileGenerationProgress(generation_id, expected_size, local_prefix_size, callback, data)
   assert (tdbot_function ({
-    _ = 'setFileGenerationProgress',
-    generation_id = generationid,
-    size = size,
-    local_size = localsize
+    ["@type"] = 'setFileGenerationProgress',
+    generation_id = generation_id,
+    expected_size = expected_size or 0,
+    local_prefix_size = local_prefix_size
   }, callback or dl_cb, data))
 end
 
-function tdbot.finishFileGeneration(generationid, callback, data)
+function tdbot.finishFileGeneration(generation_id, error, callback, data)
   assert (tdbot_function ({
-    _ = 'finishFileGeneration',
-    generation_id = generationid
+    ["@type"] = 'finishFileGeneration',
+    generation_id = generation_id,
+    error = error
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteFile(fileid, callback, data)
+function tdbot.deleteFile(file_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteFile',
-    file_id = fileid
+    ["@type"] = 'deleteFile',
+    file_id = file_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.exportChatInviteLink(chatid, callback, data)
+function tdbot.generateChatInviteLink(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'exportChatInviteLink',
-    chat_id = chatid
+    ["@type"] = 'generateChatInviteLink',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.checkChatInviteLink(invitelink, callback, data)
+function tdbot.checkChatInviteLink(invite_link, callback, data)
   assert (tdbot_function ({
-    _ = 'checkChatInviteLink',
-    invite_link = tostring(invitelink)
+    ["@type"] = 'checkChatInviteLink',
+    invite_link = tostring(invite_link)
   }, callback or dl_cb, data))
 end
 
-function tdbot.importChatInviteLink(invitelink, callback, data)
+function tdbot.joinChatByInviteLink(invite_link, callback, data)
   assert (tdbot_function ({
-    _ = 'importChatInviteLink',
-    invite_link = tostring(invitelink)
+    ["@type"] = 'joinChatByInviteLink',
+    invite_link = tostring(invite_link)
   }, callback or dl_cb, data))
 end
 
-function tdbot.createCall(userid, udpp2p, udpreflector, minlayer, maxlayer, callback, data)
+function tdbot.createCall(user_id, udp_p2p, udp_reflector, min_layer, max_layer, callback, data)
   assert (tdbot_function ({
-    _ = 'createCall',
-    user_id = userid,
+    ["@type"] = 'createCall',
+    user_id = user_id,
     protocol = {
-      _ = 'callProtocol',
-      udp_p2p = udpp2p,
-      udp_reflector = udpreflector,
-      min_layer = minlayer,
-      max_layer = maxlayer or 65
-    },
+      ["@type"] = 'callProtocol',
+      udp_p2p = udp_p2p,
+      udp_reflector = udp_reflector,
+      min_layer = min_layer or 65,
+      max_layer = max_layer or 65
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.acceptCall(callid, udpp2p, udpreflector, minlayer, maxlayer, callback, data)
+function tdbot.acceptCall(call_id, udp_p2p, udp_reflector, callback, data)
   assert (tdbot_function ({
-    _ = 'acceptCall',
-    call_id = callid,
+    ["@type"] = 'acceptCall',
+    call_id = call_id,
     protocol = {
-      _ = 'callProtocol',
-      udp_p2p = udpp2p,
-      udp_reflector = udpreflector,
-      min_layer = minlayer,
-      max_layer = maxlayer
-    },
+      ["@type"] = 'callProtocol',
+      udp_p2p = udp_p2p,
+      udp_reflector = udp_reflector,
+      min_layer = 65,
+      max_layer = 65
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.discardCall(callid, isdisconnected, callduration, connectionid, callback, data)
+function tdbot.discardCall(call_id, is_disconnected, duration, connection_id, callback, data)
   assert (tdbot_function ({
-    _ = 'discardCall',
-    call_id = callid,
-    is_disconnected = isdisconnected,
-    duration = callduration,
-    connection_id = connectionid
+    ["@type"] = 'discardCall',
+    call_id = call_id,
+    is_disconnected = is_disconnected,
+    duration = duration,
+    connection_id = connection_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.rateCall(callid, rating, usercomment, callback, data)
+function tdbot.sendCallRating(call_id, rating, comment, callback, data)
   assert (tdbot_function ({
-    _ = 'rateCall',
-    call_id = callid,
+    ["@type"] = 'sendCallRating',
+    call_id = call_id,
     rating = rating,
-    comment = tostring(usercomment)
+    comment = tostring(comment)
   }, callback or dl_cb, data))
 end
 
-function tdbot.debugCall(callid, debg, callback, data)
+function tdbot.sendCallDebugInformation(call_id, debug_information, callback, data)
   assert (tdbot_function ({
-    _ = 'debugCall',
-    call_id = callid,
-    debug = tostring(debg)
+    ["@type"] = 'sendCallDebugInformation',
+    call_id = call_id,
+    debug_information = tostring(debug_information)
   }, callback or dl_cb, data))
 end
 
-function tdbot.blockUser(userid, callback, data)
+function tdbot.blockUser(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'blockUser',
-    user_id = userid
+    ["@type"] = 'blockUser',
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.unblockUser(userid, callback, data)
+function tdbot.unblockUser(user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'unblockUser',
-    user_id = userid
+    ["@type"] = 'unblockUser',
+    user_id = user_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getBlockedUsers(off, lim, callback, data)
+function tdbot.getBlockedUsers(offset, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getBlockedUsers',
-    offset = off,
-    limit = lim
+    ["@type"] = 'getBlockedUsers',
+    offset = offset or 0,
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
-function tdbot.importContacts(phonenumber, firstname, lastname, userid, callback, data)
+function tdbot.importContacts(phone_number, first_name, last_name, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'importContacts',
+    ["@type"] = 'importContacts',
     contacts = {
-      [0] = {
-        _ = 'contact',
-        phone_number = tostring(phonenumber),
-        first_name = tostring(firstname),
-        last_name = tostring(lastname),
-        user_id = userid
-      }
-    },
+      ["@type"] = 'contact',
+      phone_number = tostring(phone_number),
+      first_name = tostring(first_name),
+      last_name = tostring(last_name),
+      user_id = user_id or 0
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchContacts(que, lim, callback, data)
+function tdbot.searchContacts(query, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchContacts',
-    query = tostring(que),
-    limit = lim
+    ["@type"] = 'searchContacts',
+    query = tostring(query),
+    limit = limit
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteContacts(userids, callback, data)
+function tdbot.removeContacts(user_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteContacts',
-    user_ids = getVector(userids),
+    ["@type"] = 'removeContacts',
+    user_ids = vectorize(user_ids)
   }, callback or dl_cb, data))
 end
 
 function tdbot.getImportedContactCount(callback, data)
   assert (tdbot_function ({
-    _ = 'getImportedContactCount'
+    ["@type"] = 'getImportedContactCount'
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteImportedContacts(callback, data)
+function tdbot.changeImportedContacts(phone_number, first_name, last_name, user_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteImportedContacts'
+    ["@type"] = 'changeImportedContacts',
+    contacts = {
+      ["@type"] = 'contact',
+      phone_number = tostring(phone_number),
+      first_name = tostring(first_name),
+      last_name = tostring(last_name),
+      user_id = user_id or 0
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.getUserProfilePhotos(userid, off, lim, callback, data)
+function tdbot.clearImportedContacts(callback, data)
   assert (tdbot_function ({
-    _ = 'getUserProfilePhotos',
-    user_id = userid,
-    offset = off,
-    limit = lim
+    ["@type"] = 'clearImportedContacts'
   }, callback or dl_cb, data))
 end
 
-function tdbot.getStickers(emo, lim, callback, data)
+function tdbot.getUserProfilePhotos(user_id, offset, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getStickers',
-    emoji = tostring(emo),
-    limit = lim
+    ["@type"] = 'getUserProfilePhotos',
+    user_id = user_id,
+    offset = offset or 0,
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getInstalledStickerSets(ismasks, callback, data)
+function tdbot.getStickers(emoji, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getInstalledStickerSets',
-    is_masks = ismasks
+    ["@type"] = 'getStickers',
+    emoji = tostring(emoji),
+    limit = setLimit(100, limit)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getArchivedStickerSets(ismasks, offsetstickersetid, lim, callback, data)
+function tdbot.searchStickers(emoji, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getArchivedStickerSets',
-    is_masks = ismasks,
-    offset_sticker_set_id = offsetstickersetid,
-    limit = lim
+    ["@type"] = 'searchStickers',
+    emoji = tostring(emoji),
+    limit = limit
+  }, callback or dl_cb, data))
+end
+
+function tdbot.getInstalledStickerSets(is_masks, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getInstalledStickerSets',
+    is_masks = is_masks
+  }, callback or dl_cb, data))
+end
+
+function tdbot.getArchivedStickerSets(is_masks, offset_sticker_set_id, limit, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getArchivedStickerSets',
+    is_masks = is_masks,
+    offset_sticker_set_id = offset_sticker_set_id,
+    limit = limit
   }, callback or dl_cb, data))
 end
 
 function tdbot.getTrendingStickerSets(callback, data)
   assert (tdbot_function ({
-    _ = 'getTrendingStickerSets'
+    ["@type"] = 'getTrendingStickerSets'
   }, callback or dl_cb, data))
 end
 
-function tdbot.getAttachedStickerSets(fileid, callback, data)
+function tdbot.getAttachedStickerSets(file_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getAttachedStickerSets',
-    file_id = fileid
+    ["@type"] = 'getAttachedStickerSets',
+    file_id = file_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getStickerSet(setid, callback, data)
+function tdbot.getStickerSet(set_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getStickerSet',
-    set_id = setid
+    ["@type"] = 'getStickerSet',
+    set_id = set_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchStickerSet(sticker_name, callback, data)
+function tdbot.searchStickerSet(name, callback, data)
   assert (tdbot_function ({
-    _ = 'searchStickerSet',
-    name = tostring(sticker_name)
+    ["@type"] = 'searchStickerSet',
+    name = tostring(name)
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeStickerSet(setid, isinstalled, isarchived, callback, data)
+function tdbot.searchInstalledStickerSets(is_masks, query, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'changeStickerSet',
-    set_id = setid,
-    is_installed = isinstalled,
-    is_archived = isarchived
+    ["@type"] = 'searchInstalledStickerSets',
+    is_masks = is_masks,
+    query = tostring(query),
+    limit = limit
   }, callback or dl_cb, data))
 end
 
-function tdbot.viewTrendingStickerSets(stickersetids, callback, data)
+function tdbot.searchStickerSets(query, callback, data)
   assert (tdbot_function ({
-    _ = 'viewTrendingStickerSets',
-    sticker_set_ids = getVector(stickersetids)
+    ["@type"] = 'searchStickerSets',
+    query = tostring(query)
   }, callback or dl_cb, data))
 end
 
-function tdbot.reorderInstalledStickerSets(ismasks, stickersetids, callback, data)
+function tdbot.changeStickerSet(set_id, is_installed, is_archived, callback, data)
   assert (tdbot_function ({
-    _ = 'reorderInstalledStickerSets',
-    is_masks = ismasks,
-    sticker_set_ids = getVector(stickersetids)
+    ["@type"] = 'changeStickerSet',
+    set_id = set_id,
+    is_installed = is_installed,
+    is_archived = is_archived
   }, callback or dl_cb, data))
 end
 
-function tdbot.getRecentStickers(isattached, callback, data)
+function tdbot.viewTrendingStickerSets(sticker_set_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'getRecentStickers',
-    is_attached = isattached
+    ["@type"] = 'viewTrendingStickerSets',
+    sticker_set_ids = vectorize(sticker_set_ids)
   }, callback or dl_cb, data))
 end
 
-function tdbot.addRecentSticker(isattached, sticker_path, callback, data)
+function tdbot.reorderInstalledStickerSets(is_masks, sticker_set_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'addRecentSticker',
-    is_attached = isattached,
-    sticker = getInputFile(sticker_path)
+    ["@type"] = 'reorderInstalledStickerSets',
+    is_masks = is_masks,
+    sticker_set_ids = vectorize(sticker_set_ids)
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteRecentSticker(isattached, sticker_path, callback, data)
+function tdbot.getRecentStickers(is_attached, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteRecentSticker',
-    is_attached = isattached,
-    sticker = getInputFile(sticker_path)
+    ["@type"] = 'getRecentStickers',
+    is_attached = is_attached
   }, callback or dl_cb, data))
 end
 
-function tdbot.clearRecentStickers(isattached, callback, data)
+function tdbot.addRecentSticker(is_attached, sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'clearRecentStickers',
-    is_attached = isattached
+    ["@type"] = 'addRecentSticker',
+    is_attached = is_attached,
+    sticker = getInputFile(sticker)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.removeRecentSticker(is_attached, sticker, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'removeRecentSticker',
+    is_attached = is_attached,
+    sticker = getInputFile(sticker)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.clearRecentStickers(is_attached, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'clearRecentStickers',
+    is_attached = is_attached
   }, callback or dl_cb, data))
 end
 
 function tdbot.getFavoriteStickers(callback, data)
   assert (tdbot_function ({
-    _ = 'getFavoriteStickers'
+    ["@type"] = 'getFavoriteStickers'
   }, callback or dl_cb, data))
 end
 
-function tdbot.addFavoriteSticker(sticker_file, callback, data)
+function tdbot.addFavoriteSticker(sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'addFavoriteSticker',
-    sticker = getInputFile(sticker_file)
+    ["@type"] = 'addFavoriteSticker',
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteFavoriteSticker(sticker_file, callback, data)
+function tdbot.removeFavoriteSticker(sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteFavoriteSticker',
-    sticker = getInputFile(sticker_file)
+    ["@type"] = 'removeFavoriteSticker',
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getStickerEmojis(sticker_path, callback, data)
+function tdbot.getStickerEmojis(sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'getStickerEmojis',
-    sticker = getInputFile(sticker_path)
+    ["@type"] = 'getStickerEmojis',
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
 function tdbot.getSavedAnimations(callback, data)
   assert (tdbot_function ({
-    _ = 'getSavedAnimations'
+    ["@type"] = 'getSavedAnimations'
   }, callback or dl_cb, data))
 end
 
-function tdbot.addSavedAnimation(animation_path, callback, data)
+function tdbot.addSavedAnimation(animation, callback, data)
   assert (tdbot_function ({
-    _ = 'addSavedAnimation',
-    animation = getInputFile(animation_path)
+    ["@type"] = 'addSavedAnimation',
+    animation = getInputFile(animation)
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteSavedAnimation(animation_path, callback, data)
+function tdbot.removeSavedAnimation(animation, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteSavedAnimation',
-    animation = getInputFile(animation_path)
+    ["@type"] = 'removeSavedAnimation',
+    animation = getInputFile(animation)
   }, callback or dl_cb, data))
 end
 
 function tdbot.getRecentInlineBots(callback, data)
   assert (tdbot_function ({
-    _ = 'getRecentInlineBots'
+    ["@type"] = 'getRecentInlineBots'
   }, callback or dl_cb, data))
 end
 
-function tdbot.searchHashtags(prefix, lim, callback, data)
+function tdbot.searchHashtags(prefix, limit, callback, data)
   assert (tdbot_function ({
-    _ = 'searchHashtags',
+    ["@type"] = 'searchHashtags',
     prefix = tostring(prefix),
-    limit = lim
+    limit = limit
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteRecentHashtag(hash, callback, data)
+function tdbot.removeRecentHashtag(hashtag, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteRecentHashtag',
-    hashtag = tostring(hash)
+    ["@type"] = 'removeRecentHashtag',
+    hashtag = tostring(hashtag)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getWebPagePreview(messagetext, callback, data)
+function tdbot.getWebPagePreview(text, callback, data)
   assert (tdbot_function ({
-    _ = 'getWebPagePreview',
-    message_text = tostring(messagetext)
+    ["@type"] = 'getWebPagePreview',
+    text = formattedText
   }, callback or dl_cb, data))
 end
 
-function tdbot.getWebPageInstantView(uri, forcefull, callback, data)
+function tdbot.getWebPageInstantView(url, force_full, callback, data)
   assert (tdbot_function ({
-    _ = 'getWebPageInstantView',
-    url = tostring(uri),
-    force_full = forcefull
+    ["@type"] = 'getWebPageInstantView',
+    url = tostring(url),
+    force_full = force_full
   }, callback or dl_cb, data))
 end
 
-function tdbot.getNotificationSettings(scop, chatid, callback, data)
+function tdbot.getNotificationSettings(scope, callback, data)
   assert (tdbot_function ({
-    _ = 'getNotificationSettings',
+    ["@type"] = 'getNotificationSettings',
+    scope = NotificationSettingsScope
+  }, callback or dl_cb, data))
+end
+
+function tdbot.setNotificationSettings(scope, chat_id, mute_for, sound, show_preview, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setNotificationSettings',
     scope = {
-      _ = 'notificationSettingsScope' .. scop,
-      chat_id = chatid
-    },
-  }, callback or dl_cb, data))
-end
-
-function tdbot.setNotificationSettings(scop, chatid, mutefor, isound, showpreview, callback, data)
-  assert (tdbot_function ({
-    _ = 'setNotificationSettings',
-    scope = {
-      _ = 'notificationSettingsScope' .. scop,
-      chat_id = chatid
+      ["@type"] = 'notificationSettingsScope' .. scope,
+      chat_id = chat_id
     },
     notification_settings = {
-      _ = 'notificationSettings',
-      mute_for = mutefor,
-      sound = tostring(isound),
-      show_preview = showpreview
-    },
+      ["@type"] = 'notificationSettings',
+      mute_for = mute_for,
+      sound = tostring(sound),
+      show_preview = show_preview
+    }
+  }, callback or dl_cb, data))
+end
+
+function tdbot.setNotificationSettings(scope, notification_settings, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'setNotificationSettings',
+    scope = NotificationSettingsScope,
+    notification_settings = notificationSettings
   }, callback or dl_cb, data))
 end
 
 function tdbot.resetAllNotificationSettings(callback, data)
   assert (tdbot_function ({
-    _ = 'resetAllNotificationSettings'
+    ["@type"] = 'resetAllNotificationSettings'
   }, callback or dl_cb, data))
 end
 
-function tdbot.setProfilePhoto(photo_path, callback, data)
+function tdbot.setProfilePhoto(photo, callback, data)
   assert (tdbot_function ({
-    _ = 'setProfilePhoto',
-    photo = getInputFile(photo_path)
+    ["@type"] = 'setProfilePhoto',
+    photo = getInputFile(photo)
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteProfilePhoto(profilephotoid, callback, data)
+function tdbot.deleteProfilePhoto(profile_photo_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteProfilePhoto',
-    profile_photo_id = profilephotoid
+    ["@type"] = 'deleteProfilePhoto',
+    profile_photo_id = profile_photo_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeName(firstname, lastname, callback, data)
+function tdbot.setName(first_name, last_name, callback, data)
   assert (tdbot_function ({
-    _ = 'changeName',
-    first_name = tostring(firstname),
-    last_name = tostring(lastname)
+    ["@type"] = 'setName',
+    first_name = tostring(first_name),
+    last_name = tostring(last_name)
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeAbout(abo, callback, data)
+function tdbot.setBio(bio, callback, data)
   assert (tdbot_function ({
-    _ = 'changeAbout',
-    about = tostring(abo)
+    ["@type"] = 'setBio',
+    bio = tostring(bio)
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeUsername(uname, callback, data)
+function tdbot.setUsername(username, callback, data)
   assert (tdbot_function ({
-    _ = 'changeUsername',
-    username = tostring(uname)
+    ["@type"] = 'setUsername',
+    username = tostring(username)
   }, callback or dl_cb, data))
 end
 
-function tdbot.changePhoneNumber(phonenumber, allowflashcall, iscurrentphonenumber, callback, data)
+function tdbot.changePhoneNumber(phone_number, allow_flash_call, is_current_phone_number, callback, data)
   assert (tdbot_function ({
-    _ = 'changePhoneNumber',
-    phone_number = tostring(phonenumber),
-    allow_flash_call = allowflashcall,
-    is_current_phone_number = iscurrentphonenumber
+    ["@type"] = 'changePhoneNumber',
+    phone_number = tostring(phone_number),
+    allow_flash_call = allow_flash_call,
+    is_current_phone_number = is_current_phone_number
   }, callback or dl_cb, data))
 end
 
 function tdbot.resendChangePhoneNumberCode(callback, data)
   assert (tdbot_function ({
-    _ = 'resendChangePhoneNumberCode'
+    ["@type"] = 'resendChangePhoneNumberCode'
   }, callback or dl_cb, data))
 end
 
-function tdbot.checkChangePhoneNumberCode(cod, callback, data)
+function tdbot.checkChangePhoneNumberCode(code, callback, data)
   assert (tdbot_function ({
-    _ = 'checkChangePhoneNumberCode',
-    code = tostring(cod)
+    ["@type"] = 'checkChangePhoneNumberCode',
+    code = tostring(code)
   }, callback or dl_cb, data))
 end
 
 function tdbot.getActiveSessions(callback, data)
   assert (tdbot_function ({
-    _ = 'getActiveSessions'
+    ["@type"] = 'getActiveSessions'
   }, callback or dl_cb, data))
 end
 
-function tdbot.terminateSession(sessionid, callback, data)
+function tdbot.terminateSession(session_id, callback, data)
   assert (tdbot_function ({
-    _ = 'terminateSession',
-    session_id = sessionid
+    ["@type"] = 'terminateSession',
+    session_id = session_id
   }, callback or dl_cb, data))
 end
 
 function tdbot.terminateAllOtherSessions(callback, data)
   assert (tdbot_function ({
-    _ = 'terminateAllOtherSessions'
+    ["@type"] = 'terminateAllOtherSessions'
   }, callback or dl_cb, data))
 end
 
-function tdbot.toggleGroupAdministrators(groupid, everyoneisadministrator, callback, data)
+function tdbot.getConnectedWebsites(callback, data)
   assert (tdbot_function ({
-    _ = 'toggleGroupAdministrators',
-    group_id = getChatId(groupid).id,
-    everyone_is_administrator = everyoneisadministrator
+    ["@type"] = 'getConnectedWebsites'
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeChannelUsername(channelid, uname, callback, data)
+function tdbot.disconnectWebsite(website_id, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChannelUsername',
-    channel_id = getChatId(channelid).id,
-    username = tostring(uname)
+    ["@type"] = 'disconnectWebsite',
+    website_id = website_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.setChannelStickerSet(channelid, stickersetid, callback, data)
+function tdbot.disconnectAllWebsites(callback, data)
   assert (tdbot_function ({
-    _ = 'setChannelStickerSet',
-    channel_id = getChatId(channelid).id,
-    sticker_set_id = stickersetid
+    ["@type"] = 'disconnectAllWebsites'
   }, callback or dl_cb, data))
 end
 
-function tdbot.toggleChannelInvites(channelid, anyonecaninvite, callback, data)
+function tdbot.toggleBasicGroupAdministrators(basic_group_id, everyone_is_administrator, callback, data)
   assert (tdbot_function ({
-    _ = 'toggleChannelInvites',
-    channel_id = getChatId(channelid).id,
-    anyone_can_invite = anyonecaninvite
+    ["@type"] = 'toggleBasicGroupAdministrators',
+    basic_group_id = getChatId(basic_group_id).id,
+    everyone_is_administrator = everyone_is_administrator
   }, callback or dl_cb, data))
 end
 
-function tdbot.toggleChannelSignMessages(channelid, signmessages, callback, data)
+function tdbot.setSupergroupUsername(supergroup_id, username, callback, data)
   assert (tdbot_function ({
-    _ = 'toggleChannelSignMessages',
-    channel_id = getChatId(channelid).id,
-    sign_messages = signmessages
+    ["@type"] = 'setSupergroupUsername',
+    supergroup_id = getChatId(supergroup_id).id,
+    username = tostring(username)
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeChannelDescription(channelid, descript, callback, data)
+function tdbot.setSupergroupStickerSet(supergroup_id, sticker_set_id, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChannelDescription',
-    channel_id = getChatId(channelid).id,
-    description = tostring(descript)
+    ["@type"] = 'setSupergroupStickerSet',
+    supergroup_id = getChatId(supergroup_id).id,
+    sticker_set_id = sticker_set_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.pinChannelMessage(channelid, messageid, disablenotification, callback, data)
+function tdbot.toggleSupergroupInvites(supergroup_id, anyone_can_invite, callback, data)
   assert (tdbot_function ({
-    _ = 'pinChannelMessage',
-    channel_id = getChatId(channelid).id,
-    message_id = messageid,
-    disable_notification = disablenotification
+    ["@type"] = 'toggleSupergroupInvites',
+    supergroup_id = getChatId(supergroup_id).id,
+    anyone_can_invite = anyone_can_invite
   }, callback or dl_cb, data))
 end
 
-function tdbot.unpinChannelMessage(channelid, callback, data)
+function tdbot.toggleSupergroupSignMessages(supergroup_id, sign_messages, callback, data)
   assert (tdbot_function ({
-    _ = 'unpinChannelMessage',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'toggleSupergroupSignMessages',
+    supergroup_id = getChatId(supergroup_id).id,
+    sign_messages = sign_messages
   }, callback or dl_cb, data))
 end
 
-function tdbot.reportChannelSpam(channelid, userid, messageids, callback, data)
+function tdbot.toggleSupergroupIsAllHistoryAvailable(supergroup_id, is_all_history_available, callback, data)
   assert (tdbot_function ({
-    _ = 'reportChannelSpam',
-    channel_id = getChatId(channelid).id,
-    user_id = userid,
-    message_ids = getVector(messageids)
+    ["@type"] = 'toggleSupergroupIsAllHistoryAvailable',
+    supergroup_id = getChatId(supergroup_id).id,
+    is_all_history_available = is_all_history_available
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChannelMembers(channelid, off, lim, mbrfilter, searchquery, callback, data)
-  local lim = lim or 200
-  lim = lim > 200 and 200 or lim
-
+function tdbot.setSupergroupDescription(supergroup_id, description, callback, data)
   assert (tdbot_function ({
-    _ = 'getChannelMembers',
-    channel_id = getChatId(channelid).id,
+    ["@type"] = 'setSupergroupDescription',
+    supergroup_id = getChatId(supergroup_id).id,
+    description = tostring(description)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.pinSupergroupMessage(supergroup_id, message_id, disable_notification, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'pinSupergroupMessage',
+    supergroup_id = getChatId(supergroup_id).id,
+    message_id = message_id,
+    disable_notification = disable_notification
+  }, callback or dl_cb, data))
+end
+
+function tdbot.unpinSupergroupMessage(supergroup_id, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'unpinSupergroupMessage',
+    supergroup_id = getChatId(supergroup_id).id
+  }, callback or dl_cb, data))
+end
+
+function tdbot.reportSupergroupSpam(supergroup_id, user_id, message_ids, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'reportSupergroupSpam',
+    supergroup_id = getChatId(supergroup_id).id,
+    user_id = user_id,
+    message_ids = vectorize(message_ids)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.getSupergroupMembers(supergroup_id, filter, query, offset, limit, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getSupergroupMembers',
+    supergroup_id = getChatId(supergroup_id).id,
     filter = {
-      _ = 'channelMembersFilter' .. mbrfilter,
-      query = tostring(searchquery)
+      ["@type"] = 'supergroupMembersFilter' .. filter,
+      query = query
     },
-    offset = off,
-    limit = lim
+    offset = offset or 0,
+    limit = setLimit(200, limit)
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteChannel(channelid, callback, data)
+function tdbot.deleteSupergroup(supergroup_id, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteChannel',
-    channel_id = getChatId(channelid).id
+    ["@type"] = 'deleteSupergroup',
+    supergroup_id = getChatId(supergroup_id).id
   }, callback or dl_cb, data))
 end
 
-function tdbot.closeSecretChat(secretchatid, callback, data)
+function tdbot.closeSecretChat(secret_chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'closeSecretChat',
-    secret_chat_id = secretchatid
+    ["@type"] = 'closeSecretChat',
+    secret_chat_id = secret_chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChatEventLog(chatid, searchquery, fromeventid, lim, userids, msgedits, msgdeletions, msgpins, mbrjoins, mbrleaves, mbrinvites, mbrpromotions, mbrrestrictions, infochanges, settingchanges, callback, data)
+function tdbot.getChatEventLog(chat_id, query, from_event_id, limit, filters, user_ids, callback, data)
+  local filters = filters or {1,1,1,1,1,1,1,1,1,1}
+
   assert (tdbot_function ({
-    _ = 'getChatEventLog',
-    chat_id = chatid,
-    query = tostring(searchquery),
-    from_event_id = fromeventid,
-    limit = lim,
+    ["@type"] = 'getChatEventLog',
+    chat_id = chat_id,
+    query = tostring(query) or '',
+    from_event_id = from_event_id or 0,
+    limit = setLimit(100, limit),
     filters = {
-      _ = 'chatEventLogFilters',
-      message_edits = msgedits or 1,
-      message_deletions = msgdeletions or 1,
-      message_pins = msgpins or 1,
-      member_joins = mbrjoins or 1,
-      member_leaves = mbrleaves or 1,
-      member_invites = mbrinvites or 1,
-      member_promotions = mbrpromotions or 1,
-      member_restrictions = mbrrestrictions or 1,
-      info_changes = infochanges or 1,
-      setting_changes = settingchanges or 1
+      ["@type"] = 'chatEventLogFilters',
+      message_edits = filters[0],
+      message_deletions = filters[1],
+      message_pins = filters[2],
+      member_joins = filters[3],
+      member_leaves = filters[4],
+      member_invites = filters[5],
+      member_promotions = filters[6],
+      member_restrictions = filters[7],
+      info_changes = filters[8],
+      setting_changes = filters[9]
     },
-    user_ids = getVector(userids)
+    user_ids = vectorize(user_ids)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getPaymentForm(chatid, messageid, callback, data)
+function tdbot.getPaymentForm(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getPaymentForm',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'getPaymentForm',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.validateOrderInfo(chatid, messageid, orderinfo, allowsave, callback, data)
+function tdbot.validateOrderInfo(chat_id, message_id, order_info, allow_save, callback, data)
   assert (tdbot_function ({
-    _ = 'validateOrderInfo',
-    chat_id = chatid,
-    message_id = messageid,
+    ["@type"] = 'validateOrderInfo',
+    chat_id = chat_id,
+    message_id = message_id,
     order_info = orderInfo,
-    allow_save = allowsave
+    allow_save = allow_save
   }, callback or dl_cb, data))
 end
 
-function tdbot.sendPaymentForm(chatid, messageid, orderinfoid, shippingoptionid, credent, input_credentials, callback, data)
-  local input_credentials = input_credentials or {}
-
-  if credent == 'Saved' then
-    input_credentials = {
-      saved_credentials_id = tostring(input_credentials[1])
-    }
-  elseif credent == 'New' then
-    input_credentials = {
-      data = tostring(input_credentials[1]),
-      allow_save = input_credentials[2]
-    }
-  end
-
-  input_credentials._ = 'inputCredentials' .. credent
-
+function tdbot.sendPaymentForm(chat_id, message_id, order_info_id, shipping_option_id, credentials, callback, data)
   assert (tdbot_function ({
-    _ = 'sendPaymentForm',
-    chat_id = chatid,
-    message_id = messageid,
-    order_info_id = tostring(orderinfoid),
-    shipping_option_id = tostring(shippingoptionid),
-    credentials = input_credentials
+    ["@type"] = 'sendPaymentForm',
+    chat_id = chat_id,
+    message_id = message_id,
+    order_info_id = tostring(order_info_id),
+    shipping_option_id = tostring(shipping_option_id),
+    credentials = InputCredentials
   }, callback or dl_cb, data))
 end
 
-function tdbot.getPaymentReceipt(chatid, messageid, callback, data)
+function tdbot.getPaymentReceipt(chat_id, message_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getPaymentReceipt',
-    chat_id = chatid,
-    message_id = messageid
+    ["@type"] = 'getPaymentReceipt',
+    chat_id = chat_id,
+    message_id = message_id
   }, callback or dl_cb, data))
 end
 
 function tdbot.getSavedOrderInfo(callback, data)
   assert (tdbot_function ({
-    _ = 'getSavedOrderInfo'
+    ["@type"] = 'getSavedOrderInfo'
   }, callback or dl_cb, data))
 end
 
 function tdbot.deleteSavedOrderInfo(callback, data)
   assert (tdbot_function ({
-    _ = 'deleteSavedOrderInfo'
+    ["@type"] = 'deleteSavedOrderInfo'
   }, callback or dl_cb, data))
 end
 
 function tdbot.deleteSavedCredentials(callback, data)
   assert (tdbot_function ({
-    _ = 'deleteSavedCredentials'
+    ["@type"] = 'deleteSavedCredentials'
   }, callback or dl_cb, data))
 end
 
 function tdbot.getSupportUser(callback, data)
   assert (tdbot_function ({
-    _ = 'getSupportUser'
+    ["@type"] = 'getSupportUser'
   }, callback or dl_cb, data))
 end
 
 function tdbot.getWallpapers(callback, data)
   assert (tdbot_function ({
-    _ = 'getWallpapers'
+    ["@type"] = 'getWallpapers'
   }, callback or dl_cb, data))
 end
 
-function tdbot.registerDevice(devicetoken, tokn, callback, data)
+function tdbot.registerDevice(device, token, device_token, is_app_sandbox, access_token, channel_uri, endpoint, p256dh_base64url, auth_base64url, reg_id, other_user_ids, callback, data)
   assert (tdbot_function ({
-    _ = 'registerDevice',
+    ["@type"] = 'registerDevice',
     device_token = {
-      _ = 'deviceToken' .. devicetoken,
-      token = tokn
+      ["@type"] = deviceToken .. device,
+      device_token = device_token,
+      is_app_sandbox = is_app_sandbox,
+      access_token = access_token,
+      channel_uri = channel_uri,
+      endpoint = endpoint,
+      p256dh_base64url = p256dh_base64url,
+      auth_base64url = auth_base64url,
+      token = token,
+      reg_id = reg_id
     },
+    other_user_ids = vectorize(other_user_ids)
   }, callback or dl_cb, data))
 end
 
-function tdbot.setPrivacy(privacy_key, rule, allowed_user_ids, disallowed_user_ids, callback, data)
-  local privacy_rules = {[0] = {_ = 'privacyRule' .. rule}}
+function tdbot.getRecentlyVisitedTMeUrls(referrer, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getRecentlyVisitedTMeUrls',
+    referrer = tostring(referrer)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.setUserPrivacySettingRules(setting, rules, allowed_user_ids, restricted_user_ids, callback, data)
+  local setting_rules = {
+    [0] = {
+      ["@type"] = "userPrivacySettingRule" .. rules
+    }
+  }
 
   if allowed_user_ids then
-    privacy_rules = {
+    setting_rules[#setting_rules + 1] = {
       {
-        _ = 'privacyRule' .. rule
-      },
-      [0] = {
-        _ = 'privacyRuleAllowUsers',
-        user_ids = allowed_user_ids
-      },
+        ["@type"] = "userPrivacySettingRuleAllowUsers",
+        user_ids = vectorize(allowed_user_ids)
+      }
+    }
+  elseif restricted_user_ids then
+    setting_rules[#setting_rules + 1] = {
+      {
+        ["@type"] = "userPrivacySettingRuleRestrictUsers",
+        user_ids = vectorize(restricted_user_ids)
+      }
     }
   end
-  if disallowed_user_ids then
-    privacy_rules = {
-      {
-        _ = 'privacyRule' .. rule
-      },
-      [0] = {
-        _ = 'privacyRuleDisallowUsers',
-        user_ids = disallowed_user_ids
-      },
-    }
-  end
-  if allowed_user_ids and disallowed_user_ids then
-    privacy_rules = {
-      {
-        _ = 'privacyRule' .. rule
-      },
-      {
-        _ = 'privacyRuleAllowUsers',
-        user_ids = allowed_user_ids
-      },
-      [0] = {
-        _ = 'privacyRuleDisallowUsers',
-        user_ids = disallowed_user_ids
-      },
-    }
-  end
+
   assert (tdbot_function ({
-    _ = 'setPrivacy',
-    key = {
-      _ = 'privacyKey' .. privacy_key
+    ["@type"] = 'setUserPrivacySettingRules',
+    setting = {
+      ["@type"] = "userPrivacySetting" .. setting
     },
     rules = {
-      _ = 'privacyRules',
-      rules = privacy_rules,
-    },
+      ["@type"] = "userPrivacySettingRules",
+      rules = setting_rules
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.getPrivacy(pkey, callback, data)
+function tdbot.getUserPrivacySettingRules(setting, callback, data)
   assert (tdbot_function ({
-    _ = 'getPrivacy',
-    key = {
-      _ = 'privacyKey' .. pkey
-    },
+    ["@type"] = 'getUserPrivacySettingRules',
+    setting = {
+      ["@type"] = 'userPrivacySetting' .. setting
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.getOption(optionname, callback, data)
+function tdbot.getOption(name, callback, data)
   assert (tdbot_function ({
-    _ = 'getOption',
-    name = tostring(optionname)
+    ["@type"] = 'getOption',
+    name = tostring(name)
   }, callback or dl_cb, data))
 end
 
-function tdbot.setOption(optionname, option, optionvalue, callback, data)
+function tdbot.setOption(name, value, callback, data)
   assert (tdbot_function ({
-    _ = 'setOption',
-    name = tostring(optionname),
-    value = {
-      _ = 'optionValue' .. option,
-      value = optionvalue
-    },
+    ["@type"] = 'setOption',
+    name = tostring(name),
+    value = OptionValue
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeAccountTtl(day, callback, data)
+function tdbot.setAccountTtl(ttl, callback, data)
   assert (tdbot_function ({
-    _ = 'changeAccountTtl',
+    ["@type"] = 'setAccountTtl',
     ttl = {
-      _ = 'accountTtl',
-      days = day
-    },
+      ["@type"] = 'accountTtl',
+      days = ttl
+    }
   }, callback or dl_cb, data))
 end
 
 function tdbot.getAccountTtl(callback, data)
   assert (tdbot_function ({
-    _ = 'getAccountTtl'
+    ["@type"] = 'getAccountTtl'
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteAccount(rea, callback, data)
+function tdbot.deleteAccount(reason, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteAccount',
-    reason = tostring(rea)
+    ["@type"] = 'deleteAccount',
+    reason = tostring(reason)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getChatReportSpamState(chatid, callback, data)
+function tdbot.getChatReportSpamState(chat_id, callback, data)
   assert (tdbot_function ({
-    _ = 'getChatReportSpamState',
-    chat_id = chatid
+    ["@type"] = 'getChatReportSpamState',
+    chat_id = chat_id
   }, callback or dl_cb, data))
 end
 
-function tdbot.changeChatReportSpamState(chatid, isspamchat, callback, data)
+function tdbot.changeChatReportSpamState(chat_id, is_spam_chat, callback, data)
   assert (tdbot_function ({
-    _ = 'changeChatReportSpamState',
-    chat_id = chatid,
-    is_spam_chat = isspamchat
+    ["@type"] = 'changeChatReportSpamState',
+    chat_id = chat_id,
+    is_spam_chat = is_spam_chat
   }, callback or dl_cb, data))
 end
 
-function tdbot.reportChat(chatid, reasn, teks, callback, data)
+function tdbot.reportChat(chat_id, reason, text, callback, data)
   assert (tdbot_function ({
-    _ = 'reportChat',
-    chat_id = chatid,
+    ["@type"] = 'reportChat',
+    chat_id = chat_id,
     reason = {
-      _ = 'chatReportReason' .. reasn,
-      text = teks
-    },
+      ["@type"] = 'chatReportReason' .. reason,
+      text = text
+    }
   }, callback or dl_cb, data))
 end
 
-function tdbot.getStorageStatistics(chatlimit, callback, data)
+function tdbot.getStorageStatistics(chat_limit, callback, data)
   assert (tdbot_function ({
-    _ = 'getStorageStatistics',
-    chat_limit = chatlimit
+    ["@type"] = 'getStorageStatistics',
+    chat_limit = chat_limit
   }, callback or dl_cb, data))
 end
 
 function tdbot.getStorageStatisticsFast(callback, data)
   assert (tdbot_function ({
-    _ = 'getStorageStatisticsFast'
+    ["@type"] = 'getStorageStatisticsFast'
   }, callback or dl_cb, data))
 end
 
-function tdbot.optimizeStorage(siz, tt, cnt, immunitydelay, filetypes, chatids, excludechatids, chatlimit, callback, data)
+function tdbot.optimizeStorage(size, ttl, count, immunity_delay, file_type, chat_ids, exclude_chat_ids, chat_limit, callback, data)
+  local file_type = file_type or ''
   assert (tdbot_function ({
-    _ = 'optimizeStorage',
-    size = siz or -1,
-    ttl = tt or -1,
-    count = cnt or -1,
-    immunity_delay = immunitydelay or -1,
-    file_types = {
-      _ = 'fileType' .. filetypes
+    ["@type"] = 'optimizeStorage',
+    size = size or -1,
+    ttl = ttl or -1,
+    count = count or -1,
+    immunity_delay = immunity_delay or -1,
+    file_type = {
+      ["@type"] = 'fileType' .. file_type
     },
-    chat_ids = getVector(chatids),
-    exclude_chat_ids = getVector(excludechatids),
-    chat_limit = chatlimit
+    chat_ids = vectorize(chat_ids),
+    exclude_chat_ids = vectorize(exclude_chat_ids),
+    chat_limit = chat_limit
   }, callback or dl_cb, data))
 end
 
-function tdbot.setNetworkType(network_type, callback, data)
+function tdbot.setNetworkType(type, callback, data)
   assert (tdbot_function ({
-    _ = 'setNetworkType',
+    ["@type"] = 'setNetworkType',
     type = {
-      _ = 'networkType' .. network_type
+      ["@type"] = 'networkType' .. type
     },
   }, callback or dl_cb, data))
 end
 
-function tdbot.getNetworkStatistics(onlycurrent, callback, data)
+function tdbot.getNetworkStatistics(only_current, callback, data)
   assert (tdbot_function ({
-    _ = 'getNetworkStatistics',
-    only_current = onlycurrent
+    ["@type"] = 'getNetworkStatistics',
+    only_current = only_current
   }, callback or dl_cb, data))
 end
 
-function tdbot.addNetworkStatistics(entri, filetype, networktype, sentbytes, receivedbytes, durasi, callback, data)
+function tdbot.addNetworkStatistics(entry, file_type, network, sent_bytes, received_bytes, duration, callback, data)
+  local file_type = file_type or 'None'
   assert (tdbot_function ({
-    _ = 'addNetworkStatistics',
+    ["@type"] = 'addNetworkStatistics',
     entry = {
-      _ = 'networkStatisticsEntry' .. entri,
+      ["@type"] = 'networkStatisticsEntry' .. entry,
       file_type = {
-        _ = 'fileType' .. filetype
+        ["@type"] = 'fileType' .. file_type
       },
       network_type = {
-        _ = 'networkType' .. networktype
+        ["@type"] = 'networkType' .. network
       },
-      sent_bytes = sentbytes,
-      received_bytes = receivedbytes,
-      duration = durasi
-    },
+      sent_bytes = sent_bytes,
+      received_bytes = received_bytes,
+      duration = duration
+    }
   }, callback or dl_cb, data))
 end
 
 function tdbot.resetNetworkStatistics(callback, data)
   assert (tdbot_function ({
-    _ = 'resetNetworkStatistics'
+    ["@type"] = 'resetNetworkStatistics'
   }, callback or dl_cb, data))
 end
 
-function tdbot.setBotUpdatesStatus(pendingupdatecount, errormessage, callback, data)
+function tdbot.setBotUpdatesStatus(pending_update_count, error_message, callback, data)
   assert (tdbot_function ({
-    _ = 'setBotUpdatesStatus',
-    pending_update_count = pendingupdatecount,
-    error_message = tostring(errormessage)
+    ["@type"] = 'setBotUpdatesStatus',
+    pending_update_count = pending_update_count,
+    error_message = tostring(error_message)
   }, callback or dl_cb, data))
 end
 
-function tdbot.uploadStickerFile(userid, pngsticker, callback, data)
+function tdbot.uploadStickerFile(user_id, png_sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'uploadStickerFile',
-    user_id = userid,
-    png_sticker = getInputFile(pngsticker)
+    ["@type"] = 'uploadStickerFile',
+    user_id = user_id,
+    png_sticker = getInputFile(png_sticker)
   }, callback or dl_cb, data))
 end
 
-function tdbot.createNewStickerSet(userid, title, name, ismasks, pngsticker, emoji, points, x_shifts, y_shifts, scales, callback, data)
+function tdbot.createNewStickerSet(user_id, title, name, is_masks, stickers, callback, data)
   assert (tdbot_function ({
-    _ = 'createNewStickerSet',
-    user_id = userid,
+    ["@type"] = 'createNewStickerSet',
+    user_id = user_id,
     title = tostring(title),
     name = tostring(name),
-    is_masks = ismasks,
-    stickers = {
-      _ = 'inputSticker',
-      png_sticker = getInputFile(pngsticker),
-      emojis = tostring(emoji),
-      mask_position = {
-        _ = 'maskPosition',
-        point = points,
-        x_shift = x_shifts,
-        y_shift = y_shifts,
-        scale = scales
-      },
-    },
+    is_masks = is_masks,
+    -- stickers = vector<inputSticker>
   }, callback or dl_cb, data))
 end
 
-function tdbot.addStickerToSet(userid, name, pngsticker, mpoint, xshift, yshift, mscale, callback, data)
+function tdbot.addStickerToSet(user_id, name, sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'addStickerToSet',
-    user_id = userid,
+    ["@type"] = 'addStickerToSet',
+    user_id = user_id,
     name = tostring(name),
-    sticker = {
-      _ = 'inputSticker',
-      png_sticker = getInputFile(pngsticker),
-      emojis = tostring(emoji),
-      mask_position = {
-        _ = 'maskPosition',
-        point = mpoint,
-        x_shift = xshift,
-        y_shift = yshift,
-        scale = mscale
-      },
-    },
+    sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
 function tdbot.setStickerPositionInSet(sticker, position, callback, data)
   assert (tdbot_function ({
-    _ = 'setStickerPositionInSet',
+    ["@type"] = 'setStickerPositionInSet',
     sticker = getInputFile(sticker),
     position = position
   }, callback or dl_cb, data))
 end
 
-function tdbot.deleteStickerFromSet(sticker, callback, data)
+function tdbot.removeStickerFromSet(sticker, callback, data)
   assert (tdbot_function ({
-    _ = 'deleteStickerFromSet',
+    ["@type"] = 'removeStickerFromSet',
     sticker = getInputFile(sticker)
   }, callback or dl_cb, data))
 end
 
 function tdbot.sendCustomRequest(method, parameters, callback, data)
   assert (tdbot_function ({
-    _ = 'sendCustomRequest',
+    ["@type"] = 'sendCustomRequest',
     method = tostring(method),
     parameters = tostring(parameters)
   }, callback or dl_cb, data))
 end
 
-function tdbot.answerCustomQuery(customqueryid, data, callback, data)
+function tdbot.answerCustomQuery(custom_query_id, data, callback, data)
   assert (tdbot_function ({
-    _ = 'answerCustomQuery',
-    custom_query_id = customqueryid,
+    ["@type"] = 'answerCustomQuery',
+    custom_query_id = custom_query_id,
     data = tostring(data)
   }, callback or dl_cb, data))
 end
 
-function tdbot.setAlarm(sec, callback, data)
+function tdbot.setAlarm(seconds, callback, data)
   assert (tdbot_function ({
-    _ = 'setAlarm',
-    seconds = sec
+    ["@type"] = 'setAlarm',
+    seconds = seconds
+  }, callback or dl_cb, data))
+end
+
+function tdbot.getCountryCode(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'getCountryCode'
   }, callback or dl_cb, data))
 end
 
 function tdbot.getInviteText(callback, data)
   assert (tdbot_function ({
-    _ = 'getInviteText'
+    ["@type"] = 'getInviteText'
   }, callback or dl_cb, data))
 end
 
 function tdbot.getTermsOfService(callback, data)
   assert (tdbot_function ({
-    _ = 'getTermsOfService'
+    ["@type"] = 'getTermsOfService'
   }, callback or dl_cb, data))
 end
 
-function tdbot.setProxy(proksi, serv, pport, uname, passwd, callback, data)
+function tdbot.setProxy(proxy, server, port, username, password, callback, data)
   assert (tdbot_function ({
-    _ = 'setProxy',
+    ["@type"] = 'setProxy',
     proxy = {
-      _ = 'proxy' .. proksi,
-      server = tostring(serv),
-      port = pport,
-      username = tostring(uname),
-      password = tostring(passwd),
-    },
+      ["@type"] = 'proxy' .. proxy,
+      server = server,
+      port = port,
+      username = username,
+      password = password
+    }
   }, callback or dl_cb, data))
 end
 
 function tdbot.getProxy(callback, data)
   assert (tdbot_function ({
-    _ = 'getProxy'
+    ["@type"] = 'getProxy'
   }, callback or dl_cb, data))
 end
 
-function tdbot.sendText(chat_id, reply_to_message_id, text, disable_notification, from_background, reply_markup, disablewebpagepreview, parsemode, cleardraft, entity, callback, data)
-  local input_message_content = {
-    _ = 'inputMessageText',
-    text = tostring(text),
-    disable_web_page_preview = disablewebpagepreview,
-    parse_mode = getParseMode(parsemode),
-    clear_draft = cleardraft,
-    entities = entity
-  }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.testCallEmpty(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallEmpty'
+  }, callback or dl_cb, data))
 end
 
-function tdbot.sendAnimation(chat_id, reply_to_message_id, animation_file, aniwidth, aniheight, anicaption, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.testCallString(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallString',
+    x = tostring(x)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testCallBytes(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallBytes',
+    x = x
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testCallVectorInt(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallVectorInt',
+    x = vectorize(x)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testCallVectorIntObject(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallVectorIntObject',
+    x = vectorize(x)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testCallVectorString(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallVectorString',
+    x = vectorize(x)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testCallVectorStringObject(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testCallVectorStringObject',
+    x = vectorize(x)
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testSquareInt(x, callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testSquareInt',
+    x = x
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testNetwork(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testNetwork'
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testGetDifference(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testGetDifference'
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testUseUpdate(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testUseUpdate'
+  }, callback or dl_cb, data))
+end
+
+function tdbot.testUseError(callback, data)
+  assert (tdbot_function ({
+    ["@type"] = 'testUseError'
+  }, callback or dl_cb, data))
+end
+
+function tdbot.sendText(chat_id, reply_to_message_id, text, parse_mode, disable_web_page_preview, clear_draft, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageAnimation',
-    animation = getInputFile(animation_file),
-    thumb = inputThumb,
+    ["@type"] = 'inputMessageText',
+    disable_web_page_preview = disable_web_page_preview,
+    text = {text = text},
+    clear_draft = clear_draft
+  }
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
+end
+
+function tdbot.sendAnimation(chat_id, reply_to_message_id, animation, caption, parse_mode, duration, width, height, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
+  local input_message_content = {
+    ["@type"] = 'inputMessageAnimation',
+    animation = getInputFile(animation),
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption},
     duration = duration,
-    width = aniwidth,
-    height = aniheight,
-    caption = tostring(anicaption)
+    width = width,
+    height = height
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
-function tdbot.sendAudio(chat_id, reply_to_message_id, audio, duration, title, performer, caption, disable_notification, from_background, reply_markup, callback, data)
+
+function tdbot.sendAudio(chat_id, reply_to_message_id, audio, caption, parse_mode, duration, title, performer, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageAudio',
+    ["@type"] = 'inputMessageAudio',
     audio = getInputFile(audio),
-    album_cover_thumb = inputThumb,
-    duration = duration or 0,
-    title = tostring(title) or 0,
-    performer = tostring(performer),
-    caption = tostring(caption)
+    album_cover_thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption},
+    duration = duration,
+    title = tostring(title),
+    performer = tostring(performer)
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendDocument(chat_id, document, caption, doc_thumb, reply_to_message_id, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendDocument(chat_id, reply_to_message_id, document, caption, parse_mode, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageDocument',
+    ["@type"] = 'inputMessageDocument',
     document = getInputFile(document),
-    thumb = doc_thumb, -- inputThumb
-    caption = tostring(caption)
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption}
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendPhoto(chat_id, reply_to_message_id, photo_file, photo_thumb, addedstickerfileids, photo_width, photo_height, photo_caption, photo_ttl, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendPhoto(chat_id, reply_to_message_id, photo, caption, parse_mode, added_sticker_file_ids, width, height, ttl, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessagePhoto',
-    photo = getInputFile(photo_file),
-    thumb = photo_thumb, -- inputThumb
-    added_sticker_file_ids = getVector(addedstickerfileids),
-    width = photo_width,
-    height = photo_height,
-    caption = tostring(photo_caption),
-    ttl = photo_ttl
+    ["@type"] = 'inputMessagePhoto',
+    photo = getInputFile(photo),
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption},
+    added_sticker_file_ids = vectorize(added_sticker_file_ids),
+    width = width,
+    height = height,
+    ttl = ttl or 0
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendSticker(chat_id, reply_to_message_id, sticker_file, sticker_width, sticker_height, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendSticker(chat_id, reply_to_message_id, sticker, width, height, disable_notification, thumbnail, thumb_width, thumb_height, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageSticker',
-    sticker = getInputFile(sticker_file),
-    thumb = sticker_thumb, -- inputThumb
-    width = sticker_width,
-    height = sticker_height
+    ["@type"] = 'inputMessageSticker',
+    sticker = getInputFile(sticker),
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    width = width,
+    height = height
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendVideo(chat_id, reply_to_message_id, video_file, vid_thumb, addedstickerfileids, vid_duration, vid_width, vid_height, vid_caption, vid_ttl, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendVideo(chat_id, reply_to_message_id, video, caption, parse_mode, added_sticker_file_ids, duration, width, height, ttl, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageVideo',
-    video = getInputFile(video_file),
-    thumb = vid_thumb, -- inputThumb
-    added_sticker_file_ids = getVector(addedstickerfileids),
-    duration = vid_duration or 0,
-    width = vid_width or 0,
-    height = vid_height or 0,
-    caption = tostring(vid_caption),
-    ttl = vid_ttl
+    ["@type"] = 'inputMessageVideo',
+    video = getInputFile(video),
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    caption = {text = caption},
+    added_sticker_file_ids = vectorize(added_sticker_file_ids),
+    duration = duration,
+    width = width,
+    height = height,
+    ttl = ttl
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendVideoNote(chat_id, reply_to_message_id, videonote, vnote_thumb, vnote_duration, vnote_length, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendVideoNote(chat_id, reply_to_message_id, videonote, duration, length, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageVideoNote',
+    ["@type"] = 'inputMessageVideoNote',
     video_note = getInputFile(videonote),
-    thumb = vidnote_thumb, -- inputThumb
-    duration = vnote_duration,
-    length = vnote_length
+    thumbnail = {
+      ["@type"] = 'inputThumbnail',
+      thumbnail = getInputFile(thumbnail),
+      width = thumb_width,
+      height = thumb_height
+    },
+    duration = duration,
+    length = length
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendVoice(chat_id, reply_to_message_id, voice_file, voi_duration, voi_waveform, voi_caption, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendVoiceNote(chat_id, reply_to_message_id, voice_note, caption, parse_mode, duration, waveform, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageVoice',
-    voice = getInputFile(voice_file),
-    duration = voi_duration or 0,
-    waveform = voi_waveform,
-    caption = tostring(voi_caption)
+    ["@type"] = 'inputMessageVoiceNote',
+    voice_note = getInputFile(voice_note),
+    caption = {text = caption},
+    duration = duration,
+    waveform = waveform
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendLocation(chat_id, reply_to_message_id, lat, lon, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendLocation(chat_id, reply_to_message_id, latitude, longitude, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageLocation',
+    ["@type"] = 'inputMessageLocation',
     location = {
-      _ = 'location',
-      latitude = lat,
-      longitude = lon
+      ["@type"] = 'location',
+      latitude = latitude,
+      longitude = longitude
     },
+    live_period = liveperiod
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendVenue(chat_id, reply_to_message_id, lat, lon, ven_title, ven_address, ven_provider, ven_id, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendVenue(chat_id, reply_to_message_id, latitude, longitude, title, address, provider, id, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageVenue',
+    ["@type"] = 'inputMessageVenue',
     venue = {
-      _ = 'venue',
+      ["@type"] = 'venue',
       location = {
-        _ = 'location',
-        latitude = lat,
-        longitude = lon
+        ["@type"] = 'location',
+        latitude = latitude,
+        longitude = longitude
       },
-      title = tostring(ven_title),
-      address = tostring(ven_address),
-      provider = tostring(ven_provider) or 'foursquare',
-      id = tostring(ven_id)
-    },
+      title = tostring(title),
+      address = tostring(address),
+      provider = tostring(provider),
+      id = tostring(id)
+    }
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendContact(chat_id, reply_to_message_id, phonenumber, firstname, lastname, userid, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendContact(chat_id, reply_to_message_id, phone_number, first_name, last_name, user_id, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageContact',
+    ["@type"] = 'inputMessageContact',
     contact = {
-      _ = 'contact',
-      phone_number = tostring(phonenumber),
-      first_name = tostring(firstname),
-      last_name = tostring(lastname),
-      user_id = userid
-    },
+      ["@type"] = 'contact',
+      phone_number = tostring(phone_number),
+      first_name = tostring(first_name),
+      last_name = tostring(last_name),
+      user_id = user_id
+    }
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendGame(chat_id, reply_to_message_id, botuserid, gameshortname, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendGame(chat_id, reply_to_message_id, bot_user_id, gameshortname, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageGame',
-    bot_user_id = botuserid,
+    ["@type"] = 'inputMessageGame',
+    bot_user_id = bot_user_id,
     game_short_name = tostring(gameshortname)
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendInvoice(chat_id, reply_to_message_id, the_invoice, inv_title, inv_desc, photourl, photosize, photowidth, photoheight, inv_payload, providertoken, startparameter, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendInvoice(chat_id, reply_to_message_id, invoice, title, description, photo_url, photo_size, photo_width, photo_height, payload, provider_token, provider_data, start_parameter, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageInvoice',
-    invoice = the_invoice,
-    -- invoice = {
-      -- _ = 'invoice',
-      -- currency = tostring(currency),
-      -- prices = prices, -- vector<labeledPrice>
-      -- is_test = is_test,
-      -- need_name = need_name,
-      -- need_phone_number = need_phone_number,
-      -- need_email = need_email,
-      -- need_shipping_address = need_shipping_address,
-      -- is_flexible = is_flexible
-    -- },
-    title = tostring(inv_title),
-    description = tostring(inv_desc),
-    photo_url = tostring(photourl),
-    photo_size = photosize,
-    photo_width = photowidth,
-    photo_height = photoheight,
-    payload = inv_payload,
-    provider_token = tostring(providertoken),
-    start_parameter = tostring(startparameter)
+    ["@type"] = 'inputMessageInvoice',
+    invoice = invoice,
+    title = tostring(title),
+    description = tostring(description),
+    photo_url = tostring(photo_url),
+    photo_size = photo_size,
+    photo_width = photo_width,
+    photo_height = photo_height,
+    payload = payload,
+    provider_token = tostring(provider_token),
+    provider_data = tostring(provider_data),
+    start_parameter = tostring(start_parameter)
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendForwarded(chat_id, reply_to_message_id, fromchatid, messageid, ingameshare, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendForwarded(chat_id, reply_to_message_id, from_chat_id, message_id, ingameshare, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
-    _ = 'inputMessageForwarded',
-    from_chat_id = fromchatid,
-    message_id = messageid,
+    ["@type"] = 'inputMessageForwarded',
+    from_chat_id = from_chat_id,
+    message_id = message_id,
     in_game_share = ingameshare
   }
-  sendMessage(chat_id, reply_to_message_id, input_message_content, disable_notification, from_background, reply_markup, callback, data)
+  sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
 return tdbot
