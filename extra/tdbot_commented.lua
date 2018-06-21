@@ -116,8 +116,9 @@ local function sendMessage(chat_id, reply_to_message_id, input_message_content, 
     reply_markup = reply_markup,
     input_message_content = input_message_content
   }
+  local text = input_message_content.text and input_message_content.text.text or input_message_content.caption.text
+
   if parse_mode then
-    local text = input_message_content.text and input_message_content.text.text or input_message_content.caption.text
     parseTextEntities(text, parse_mode, function(a, d)
       if a.tdbody.input_message_content.text then
         a.tdbody.input_message_content.text = d
@@ -125,9 +126,29 @@ local function sendMessage(chat_id, reply_to_message_id, input_message_content, 
         a.tdbody.input_message_content.caption = d
       end
       assert (tdbot_function (a.tdbody, callback or dl_cb, data))
-    end, {tdbody = tdbody})
+    end, {tdbody = tdbody, callback = callback, data = data})
   else
-    assert (tdbot_function (tdbody, callback or dl_cb, data))
+    local message = {}
+    local n = 1
+    -- Send multiple messages if text is longer than 4096 UTF8 characters.
+    -- https://core.telegram.org/method/messages.sendMessage
+    while #text > 4096 do
+      message[n] = text:sub(1, 4096)
+      text = text:sub(4096, #text)
+      parse_mode = nil
+      n = n + 1
+    end
+    message[n] = text
+
+    for i = 1, #message do
+      tdbody.reply_to_message_id = i > 1 and 0 or reply_to_message_id
+      if input_message_content.text and input_message_content.text.text then
+        tdbody.input_message_content.text.text = message[i]
+      else
+        tdbody.input_message_content.caption.text = message[i]
+      end
+      assert (tdbot_function (tdbody, callback or dl_cb, data))
+    end
   end
 end
 
@@ -1058,7 +1079,7 @@ function tdbot.editMessageText(chat_id, message_id, text, parse_mode, disable_we
     parseTextEntities(text, parse_mode, function(a, d)
       a.tdbody.input_message_content.text = d
       assert (tdbot_function (a.tdbody, callback or dl_cb, data))
-    end, {tdbody = tdbody})
+    end, {tdbody = tdbody, callback = callback, data = data})
   else
     assert (tdbot_function (tdbody, callback or dl_cb, data))
   end
@@ -1608,7 +1629,7 @@ function tdbot.setChatDraftMessage(chat_id, reply_to_message_id, text, parse_mod
     parseTextEntities(text, parse_mode, function(a, d)
       a.tdbody.draft_message.input_message_text.text = d
       assert (tdbot_function (a.tdbody, callback or dl_cb, data))
-    end, {tdbody = tdbody})
+    end, {tdbody = tdbody, callback = callback, data = data})
   else
     assert (tdbot_function (tdbody, callback or dl_cb, data))
   end
