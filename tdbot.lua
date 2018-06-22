@@ -95,39 +95,49 @@ local function sendMessage(chat_id, reply_to_message_id, input_message_content, 
     reply_markup = reply_markup,
     input_message_content = input_message_content
   }
-  local text = input_message_content.text and input_message_content.text.text or input_message_content.caption.text
+  local text
 
-  if parse_mode then
-    parseTextEntities(text, parse_mode, function(a, d)
-      if a.tdbody.input_message_content.text then
-        a.tdbody.input_message_content.text = d
-      else
-        a.tdbody.input_message_content.caption = d
+  if input_message_content.text then
+    text = input_message_content.text.text
+  elseif input_message_content.caption then
+    text = input_message_content.caption.text
+  end
+
+  if text then
+    if parse_mode then
+      parseTextEntities(text, parse_mode, function(a, d)
+        if a.tdbody.input_message_content.text then
+          a.tdbody.input_message_content.text = d
+        else
+          a.tdbody.input_message_content.caption = d
+        end
+        assert (tdbot_function (a.tdbody, a.callback or dl_cb, a.data))
+      end, {tdbody = tdbody, callback = callback, data = data})
+    else
+      local message = {}
+      local n = 1
+      -- Send multiple messages if text is longer than 4096 characters.
+      -- https://core.telegram.org/method/messages.sendMessage
+      while #text > 4096 do
+        message[n] = text:sub(1, 4096)
+        text = text:sub(4096, #text)
+        parse_mode = nil
+        n = n + 1
       end
-      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
-    end, {tdbody = tdbody, callback = callback, data = data})
+      message[n] = text
+
+      for i = 1, #message do
+        tdbody.reply_to_message_id = i > 1 and 0 or reply_to_message_id
+        if input_message_content.text and input_message_content.text.text then
+          tdbody.input_message_content.text.text = message[i]
+        else
+          tdbody.input_message_content.caption.text = message[i]
+        end
+        assert (tdbot_function (tdbody, callback or dl_cb, data))
+      end
+    end
   else
-    local message = {}
-    local n = 1
-    -- Send multiple messages if text is longer than 4096 UTF8 characters.
-    -- https://core.telegram.org/method/messages.sendMessage
-    while #text > 4096 do
-      message[n] = text:sub(1, 4096)
-      text = text:sub(4096, #text)
-      parse_mode = nil
-      n = n + 1
-    end
-    message[n] = text
-
-    for i = 1, #message do
-      tdbody.reply_to_message_id = i > 1 and 0 or reply_to_message_id
-      if input_message_content.text and input_message_content.text.text then
-        tdbody.input_message_content.text.text = message[i]
-      else
-        tdbody.input_message_content.caption.text = message[i]
-      end
-      assert (tdbot_function (tdbody, callback or dl_cb, data))
-    end
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
   end
 end
 
@@ -738,7 +748,7 @@ function tdbot.editMessageText(chat_id, message_id, text, parse_mode, disable_we
   if parse_mode then
     parseTextEntities(text, parse_mode, function(a, d)
       a.tdbody.input_message_content.text = d
-      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
+      assert (tdbot_function (a.tdbody, a.callback or dl_cb, a.data))
     end, {tdbody = tdbody, callback = callback, data = data})
   else
     assert (tdbot_function (tdbody, callback or dl_cb, data))
@@ -1106,7 +1116,7 @@ function tdbot.setChatDraftMessage(chat_id, reply_to_message_id, text, parse_mod
   if parse_mode then
     parseTextEntities(text, parse_mode, function(a, d)
       a.tdbody.draft_message.input_message_text.text = d
-      assert (tdbot_function (a.tdbody, callback or dl_cb, data))
+      assert (tdbot_function (a.tdbody, a.callback or dl_cb, a.data))
     end, {tdbody = tdbody, callback = callback, data = data})
   else
     assert (tdbot_function (tdbody, callback or dl_cb, data))
@@ -2494,10 +2504,10 @@ function tdbot.sendVideo(chat_id, reply_to_message_id, video, caption, parse_mod
   sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendVideoNote(chat_id, reply_to_message_id, videonote, duration, length, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendVideoNote(chat_id, reply_to_message_id, video_note, duration, length, thumbnail, thumb_width, thumb_height, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
     ["@type"] = 'inputMessageVideoNote',
-    video_note = getInputFile(videonote),
+    video_note = getInputFile(video_note),
     thumbnail = {
       ["@type"] = 'inputThumbnail',
       thumbnail = getInputFile(thumbnail),
@@ -2594,12 +2604,12 @@ function tdbot.sendInvoice(chat_id, reply_to_message_id, invoice, title, descrip
   sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
 
-function tdbot.sendForwarded(chat_id, reply_to_message_id, from_chat_id, message_id, ingameshare, disable_notification, from_background, reply_markup, callback, data)
+function tdbot.sendForwarded(chat_id, reply_to_message_id, from_chat_id, message_id, in_game_share, disable_notification, from_background, reply_markup, callback, data)
   local input_message_content = {
     ["@type"] = 'inputMessageForwarded',
     from_chat_id = from_chat_id,
     message_id = message_id,
-    in_game_share = ingameshare
+    in_game_share = in_game_share
   }
   sendMessage(chat_id, reply_to_message_id, input_message_content, nil, disable_notification, from_background, reply_markup, callback, data)
 end
