@@ -5,8 +5,8 @@ See [wiki](https://github.com/rizaumami/tdbot.lua/wiki) for documentation.
 
 ## How to Use
 
-- Put `tdbot.lua` on a same directory level with your bot script
-- Import `tdbot.lua` into your bot.
+- Put `tdbot.lua` on a same directory level with the bot script
+- Import `tdbot.lua` into the bot.
 - Call the functions.
 
 See example script below.
@@ -20,7 +20,7 @@ function tdbot_update_callback (data)
     local msg = data.message
 
     if msg.content["@type"] == "messageText" then
-      if msg.content.text == "ping" then
+      if msg.content.text.text == "ping" then
         tdbot.sendText(msg.chat_id, msg.id, '<b>pong!</b>', 'html')
       end
     end
@@ -32,8 +32,8 @@ end
 ## The Functions
 
 `tdbot.lua` is a _Work In Progress_. This commit is based on:  
-* `tdbot` commit [a838e87](https://github.com/vysheng/tdbot/commit/a838e8768f1c405306975763d59d48ca9f347805)
-* `td_api.tl` from `td` commit [cfe4d9b](https://github.com/tdlib/td/commit/cfe4d9bdcee9305632eb228a46a95407d05b5c7a).  
+* `tdbot` commit https://github.com/vysheng/tdbot/commit/a838e8768f1c405306975763d59d48ca9f347805
+* `td_api.tl` from `td` commit https://github.com/tdlib/td/commit/cfe4d9bdcee9305632eb228a46a95407d05b5c7a
 
 Here is a list of `tdbot` methods. Checked functions has been tested and works or at least returned "ok".
 
