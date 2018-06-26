@@ -121,7 +121,6 @@ local function sendMessage(chat_id, reply_to_message_id, input_message_content, 
       while #text > 4096 do
         message[n] = text:sub(1, 4096)
         text = text:sub(4096, #text)
-        parse_mode = nil
         n = n + 1
       end
       message[n] = text
@@ -1659,10 +1658,13 @@ function tdbot.getWebPageInstantView(url, force_full, callback, data)
   }, callback or dl_cb, data))
 end
 
-function tdbot.getNotificationSettings(scope, callback, data)
+function tdbot.getNotificationSettings(scope, chat_id, callback, data)
   assert (tdbot_function ({
     ["@type"] = 'getNotificationSettings',
-    scope = NotificationSettingsScope
+    scope = {
+      ["@type"] = 'notificationSettingsScope' .. scope,
+      chat_id = chat_id
+    }
   }, callback or dl_cb, data))
 end
 
@@ -1874,6 +1876,7 @@ function tdbot.reportSupergroupSpam(supergroup_id, user_id, message_ids, callbac
 end
 
 function tdbot.getSupergroupMembers(supergroup_id, filter, query, offset, limit, callback, data)
+  local filter = filter or 'Recent'
   assert (tdbot_function ({
     ["@type"] = 'getSupergroupMembers',
     supergroup_id = getChatId(supergroup_id).id,
@@ -2070,11 +2073,14 @@ function tdbot.getOption(name, callback, data)
   }, callback or dl_cb, data))
 end
 
-function tdbot.setOption(name, value, callback, data)
+function tdbot.setOption(name, option_value, value, callback, data)
   assert (tdbot_function ({
     ["@type"] = 'setOption',
     name = tostring(name),
-    value = OptionValue
+    value = {
+      ["@type"] = 'optionValue' .. option_value,
+      value = value
+    }
   }, callback or dl_cb, data))
 end
 
@@ -2116,14 +2122,15 @@ function tdbot.changeChatReportSpamState(chat_id, is_spam_chat, callback, data)
   }, callback or dl_cb, data))
 end
 
-function tdbot.reportChat(chat_id, reason, text, callback, data)
+function tdbot.reportChat(chat_id, reason, text, message_ids, callback, data)
   assert (tdbot_function ({
     ["@type"] = 'reportChat',
     chat_id = chat_id,
     reason = {
       ["@type"] = 'chatReportReason' .. reason,
       text = text
-    }
+    },
+    message_ids = vectorize(message_ids)
   }, callback or dl_cb, data))
 end
 
@@ -2173,7 +2180,7 @@ function tdbot.getNetworkStatistics(only_current, callback, data)
   }, callback or dl_cb, data))
 end
 
-function tdbot.addNetworkStatistics(entry, file_type, network, sent_bytes, received_bytes, duration, callback, data)
+function tdbot.addNetworkStatistics(entry, file_type, network_type, sent_bytes, received_bytes, duration, callback, data)
   local file_type = file_type or 'None'
   assert (tdbot_function ({
     ["@type"] = 'addNetworkStatistics',
@@ -2183,7 +2190,7 @@ function tdbot.addNetworkStatistics(entry, file_type, network, sent_bytes, recei
         ["@type"] = 'fileType' .. file_type
       },
       network_type = {
-        ["@type"] = 'networkType' .. network
+        ["@type"] = 'networkType' .. network_type
       },
       sent_bytes = sent_bytes,
       received_bytes = received_bytes,

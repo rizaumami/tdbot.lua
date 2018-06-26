@@ -142,7 +142,6 @@ local function sendMessage(chat_id, reply_to_message_id, input_message_content, 
       while #text > 4096 do
         message[n] = text:sub(1, 4096)
         text = text:sub(4096, #text)
-        parse_mode = nil
         n = n + 1
       end
       message[n] = text
@@ -2398,10 +2397,13 @@ end
 
 -- Returns the notification settings for a given scope
 -- @scope Scope for which to return the notification settings information
-function tdbot.getNotificationSettings(scope, callback, data)
+function tdbot.getNotificationSettings(scope, chat_id, callback, data)
   assert (tdbot_function ({
     ["@type"] = 'getNotificationSettings',
-    scope = NotificationSettingsScope
+    scope = {
+      ["@type"] = 'notificationSettingsScope' .. scope,
+      chat_id = chat_id
+    }
   }, callback or dl_cb, data))
 end
 
@@ -2958,11 +2960,14 @@ end
 -- Can be called before authorization
 -- @name The name of the option
 -- @value The new value of the option
-function tdbot.setOption(name, value, callback, data)
+function tdbot.setOption(name, option_value, value, callback, data)
   assert (tdbot_function ({
     ["@type"] = 'setOption',
     name = tostring(name),
-    value = OptionValue
+    value = {
+      ["@type"] = 'optionValue' .. option_value,
+      value = value
+    }
   }, callback or dl_cb, data))
 end
 
@@ -3021,15 +3026,17 @@ end
 -- Supported only for supergroups, channels, or private chats with bots, since other chats can't be checked by moderators
 -- @chat_id Chat identifier
 -- @reason The reason for reporting the chat: Spam|Violence|Pornography|Custom
+-- @text Report text
 -- @message_ids Identifiers of reported messages, if any
-function tdbot.reportChat(chat_id, reason, text, callback, data)
+function tdbot.reportChat(chat_id, reason, text, message_ids, callback, data)
   assert (tdbot_function ({
     ["@type"] = 'reportChat',
     chat_id = chat_id,
     reason = {
       ["@type"] = 'chatReportReason' .. reason,
       text = text
-    }
+    },
+    message_ids = vectorize(message_ids)
   }, callback or dl_cb, data))
 end
 
@@ -3120,7 +3127,8 @@ end
 -- entry = File|Call
 -- fileType = None|Animation|Audio|Document|Photo|ProfilePhoto|Secret|Sticker|Thumbnail|Unknown|Video|VideoNote|VoiceNote|Wallpaper|SecretThumbnail
 -- network = None|Mobile|MobileRoaming|WiFi|Other
-function tdbot.addNetworkStatistics(entry, file_type, network, sent_bytes, received_bytes, duration, callback, data)
+
+function tdbot.addNetworkStatistics(entry, file_type, network_type, sent_bytes, received_bytes, duration, callback, data)
   local file_type = file_type or 'None'
   assert (tdbot_function ({
     ["@type"] = 'addNetworkStatistics',
@@ -3130,7 +3138,7 @@ function tdbot.addNetworkStatistics(entry, file_type, network, sent_bytes, recei
         ["@type"] = 'fileType' .. file_type
       },
       network_type = {
-        ["@type"] = 'networkType' .. network
+        ["@type"] = 'networkType' .. network_type
       },
       sent_bytes = sent_bytes,
       received_bytes = received_bytes,
