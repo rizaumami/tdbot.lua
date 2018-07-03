@@ -815,6 +815,7 @@ end
 -- Fewer messages may be returned than specified by the limit, even if the end of the message history has not been reached
 -- @filter Filter for message content in the search results: Empty|Animation|Audio|Document|Photo|Video|VoiceNote|PhotoAndVideo|Url|ChatPhoto|Call|MissedCall|VideoNote|VoiceAndVideoNote|Mention|UnreadMention
 function tdbot.searchChatMessages(chat_id, query, filter, sender_user_id, from_message_id, offset, limit, callback, data)
+  local filter = filter or 'Empty'
   assert (tdbot_function ({
     ["@type"] = 'searchChatMessages',
     chat_id = chat_id,
@@ -1123,17 +1124,21 @@ end
 -- @message_id Identifier of the message
 -- @reply_markup The new message reply markup; for bots only
 -- @caption New message content caption; 0-200 characters
-function tdbot.editMessageCaption(chat_id, message_id, caption, reply_markup, callback, data)
-  assert (tdbot_function ({
+function tdbot.editMessageCaption(chat_id, message_id, text, parse_mode, reply_markup, callback, data)
+  local tdbody = {
     ["@type"] = 'editMessageCaption',
     chat_id = chat_id,
     message_id = message_id,
-    reply_markup = reply_markup,
-    caption = {
-      ["@type"] = 'formattedText',
-      text = tostring(caption)
-    }
-  }, callback or dl_cb, data))
+    reply_markup = reply_markup
+  }
+  if parse_mode then
+    parseTextEntities(text, parse_mode, function(a, d)
+      a.tdbody.caption = d
+      assert (tdbot_function (a.tdbody, a.callback or dl_cb, a.data))
+    end, {tdbody = tdbody, callback = callback, data = data})
+  else
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
+  end
 end
 
 -- Edits the message reply markup; for bots only.
@@ -1767,7 +1772,7 @@ function tdbot.searchChatMembers(chat_id, query, limit, callback, data)
     ["@type"] = 'searchChatMembers',
     chat_id = chat_id,
     query = tostring(query),
-    limit = limit
+    limit = setLimit(200, limit)
   }, callback or dl_cb, data))
 end
 
@@ -2379,7 +2384,9 @@ end
 function tdbot.getWebPagePreview(text, callback, data)
   assert (tdbot_function ({
     ["@type"] = 'getWebPagePreview',
-    text = formattedText
+    text = {
+      text = text
+    }
   }, callback or dl_cb, data))
 end
 

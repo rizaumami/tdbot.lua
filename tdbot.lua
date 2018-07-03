@@ -603,6 +603,7 @@ function tdbot.searchMessages(query, offset_date, offset_chat_id, offset_message
 end
 
 function tdbot.searchSecretMessages(chat_id, query, from_search_id, limit, filter, callback, data)
+  local filter = filter or 'Empty'
   assert (tdbot_function ({
     ["@type"] = 'searchSecretMessages',
     chat_id = chat_id or 0,
@@ -768,17 +769,21 @@ function tdbot.editMessageLiveLocation(chat_id, message_id, latitude, longitude,
   }, callback or dl_cb, data))
 end
 
-function tdbot.editMessageCaption(chat_id, message_id, caption, reply_markup, callback, data)
-  assert (tdbot_function ({
+function tdbot.editMessageCaption(chat_id, message_id, text, parse_mode, reply_markup, callback, data)
+  local tdbody = {
     ["@type"] = 'editMessageCaption',
     chat_id = chat_id,
     message_id = message_id,
-    reply_markup = reply_markup,
-    caption = {
-      ["@type"] = 'formattedText',
-      text = tostring(caption)
-    }
-  }, callback or dl_cb, data))
+    reply_markup = reply_markup
+  }
+  if parse_mode then
+    parseTextEntities(text, parse_mode, function(a, d)
+      a.tdbody.caption = d
+      assert (tdbot_function (a.tdbody, a.callback or dl_cb, a.data))
+    end, {tdbody = tdbody, callback = callback, data = data})
+  else
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
+  end
 end
 
 function tdbot.editMessageReplyMarkup(chat_id, message_id, reply_markup, callback, data)
@@ -1210,7 +1215,7 @@ function tdbot.searchChatMembers(chat_id, query, limit, callback, data)
     ["@type"] = 'searchChatMembers',
     chat_id = chat_id,
     query = tostring(query),
-    limit = limit
+    limit = setLimit(200, limit)
   }, callback or dl_cb, data))
 end
 
@@ -1245,11 +1250,12 @@ function tdbot.cancelDownloadFile(file_id, only_if_pending, callback, data)
 end
 
 function tdbot.uploadFile(file, file_type, priority, callback, data)
+  local ftype = file_type or 'Unknown'
   assert (tdbot_function ({
     ["@type"] = 'uploadFile',
     file = getInputFile(file),
     file_type = {
-      ["@type"] = 'fileType' .. file_type
+      ["@type"] = 'fileType' .. ftype
     },
     priority = priority or 32
   }, callback or dl_cb, data))
@@ -1646,7 +1652,9 @@ end
 function tdbot.getWebPagePreview(text, callback, data)
   assert (tdbot_function ({
     ["@type"] = 'getWebPagePreview',
-    text = formattedText
+    text = {
+      text = text
+    }
   }, callback or dl_cb, data))
 end
 
