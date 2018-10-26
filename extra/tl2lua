@@ -6,7 +6,8 @@
 # Script to create a tdbot.lua basic structure from Telegram library file
 #
 # HOW
-# - Get td_api.tl file from td's repo: td/td/generate/scheme/td_api.tl
+# - Get td_api.tl file from tdlib's repo:
+#   https://github.com/tdlib/td/blob/master/td/generate/scheme/td_api.tl
 # - Put this script and tl file(s) in a same directory
 # - Run this script, e.g by execute this command: ./tl2lua
 # - Lua file(s) with similar name to tl file(s) will then be generated
@@ -60,18 +61,18 @@ local function getInputFile(file, conversion_str, expected_size)
 
   if (conversion_str and expectedsize) then
     infile = {
-      ["@type"] = 'inputFileGenerated',
+      [\"@type\"] = 'inputFileGenerated',
       original_path = tostring(file),
       conversion = tostring(conversion_str),
       expected_size = expected_size
     }
   else
     if input:match('/') then
-      infile = {["@type"] = 'inputFileLocal', path = file}
+      infile = {[\"@type\"] = 'inputFileLocal', path = file}
     elseif input:match('^%d+$') then
-      infile = {["@type"] = 'inputFileId', id = file}
+      infile = {[\"@type\"] = 'inputFileId', id = file}
     else
-      infile = {["@type"] = 'inputFileRemote', id = file}
+      infile = {[\"@type\"] = 'inputFileRemote', id = file}
     end
   end
 
@@ -87,9 +88,9 @@ local function getParseMode(parse_mode)
     local mode = parse_mode:lower()
 
     if mode == 'markdown' or mode == 'md' then
-      P["@type"] = 'textParseModeMarkdown'
+      P[\"@type\"] = 'textParseModeMarkdown'
     elseif mode == 'html' then
-      P["@type"] = 'textParseModeHTML'
+      P[\"@type\"] = 'textParseModeHTML'
     end
   end
   return P
@@ -101,12 +102,12 @@ end
 -- Can be called synchronously
 -- @text The text which should be parsed
 -- @parse_mode Text parse mode
-local function parseTextEntities(text, parse_mode, dl_cb, data)
+local function parseTextEntities(text, parse_mode, callback, data)
   assert (tdbot_function ({
-    ["@type"] = 'parseTextEntities',
+    [\"@type\"] = 'parseTextEntities',
     text = tostring(text),
     parse_mode = getParseMode(parse_mode)
-  }, dl_cb, data))
+  }, callback or dl_cb, data))
 end
 
 tdbot.parseTextEntities = parseTextEntities
@@ -119,9 +120,9 @@ tdbot.parseTextEntities = parseTextEntities
 -- @from_background Pass true if the message is sent from the background
 -- @reply_markup Markup for replying to the message; for bots only
 -- @input_message_content The content of the message to be sent
-local function sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, dl_cb, data)
+local function sendMessage(chat_id, reply_to_message_id, input_message_content, parse_mode, disable_notification, from_background, reply_markup, callback, data)
   local tdbody = {
-    ["@type"] = 'sendMessage',
+    [\"@type\"] = 'sendMessage',
     chat_id = chat_id,
     reply_to_message_id = reply_to_message_id or 0,
     disable_notification = disable_notification or 0,
@@ -129,18 +130,48 @@ local function sendMessage(chat_id, reply_to_message_id, input_message_content, 
     reply_markup = reply_markup,
     input_message_content = input_message_content
   }
-  if parse_mode then
-    local text = input_message_content.text and input_message_content.text.text or input_message_content.caption.text
-    parseTextEntities(text, parse_mode, function(a, d)
-      if a.tdbody.input_message_content.text then
-        a.tdbody.input_message_content.text = d
-      else
-        a.tdbody.input_message_content.caption = d
+  local text
+
+  if input_message_content.text then
+    text = input_message_content.text.text
+  elseif input_message_content.caption then
+    text = input_message_content.caption.text
+  end
+
+  if text then
+    if parse_mode then
+      parseTextEntities(text, parse_mode, function(a, d)
+        if a.tdbody.input_message_content.text then
+          a.tdbody.input_message_content.text = d
+        else
+          a.tdbody.input_message_content.caption = d
+        end
+        assert (tdbot_function (a.tdbody, a.callback or dl_cb, a.data))
+      end, {tdbody = tdbody, callback = callback, data = data})
+    else
+      local message = {}
+      local n = 1
+      -- Send multiple messages if text is longer than 4096 characters.
+      -- https://core.telegram.org/method/messages.sendMessage
+      while #text > 4096 do
+        message[n] = text:sub(1, 4096)
+        text = text:sub(4096, #text)
+        n = n + 1
       end
-      assert (tdbot_function (a.tdbody, dl_cb, data))
-    end, {tdbody = tdbody})
+      message[n] = text
+
+      for i = 1, #message do
+        tdbody.reply_to_message_id = i > 1 and 0 or reply_to_message_id
+        if input_message_content.text and input_message_content.text.text then
+          tdbody.input_message_content.text.text = message[i]
+        else
+          tdbody.input_message_content.caption.text = message[i]
+        end
+        assert (tdbot_function (tdbody, callback or dl_cb, data))
+      end
+    end
   else
-    assert (tdbot_function (tdbody, dl_cb, data))
+    assert (tdbot_function (tdbody, callback or dl_cb, data))
   end
 end
 
@@ -167,7 +198,7 @@ local function vectorize(str)
   if not str then return v end
 
   for k in string.gmatch(str, '(-?%d+)') do
-    v[i] = '[' .. i-1 .. ']="' .. k .. '"'
+    v[i] = '[' .. i-1 .. ']=\"' .. k .. '\"'
     i = i+1
   end
   v = table.concat(v, ',')
@@ -178,7 +209,7 @@ while read -r tl; do
   # output filename
   tdbot="${tl%.*}.lua"
 
-  # get lines after '---functions---' until the end of file
+  # get lines after '---functions---' until the end of the file
   awk 'NR == 1, $0 ~ /---functions---/ {next}; {print}' "$tl" > "$tdbot"
 
   # characters substitutions
@@ -204,9 +235,22 @@ while read -r tl; do
     $0=$0"\n  }, callback or dl_cb, data))\nend\n\n"
   };1' "$tdbot"
 
+  # split one variable per line and then replace colon (:) by equal (=) char
   awk -i inplace '/^[[:alpha:]][[:alpha:]]/{
-    gsub(/:/, "=")
-    gsub(/ /, ",\n    ")
+    gsub(/ /, ",\n")
+    gsub(/:/, "= ")
+  };1' "$tdbot"
+
+  # set variables value and indent by 4 spaces
+  awk -F= -i inplace '/[[:alpha:]]= [[:alpha:]]/{
+    gsub(/ string/, "= tostring("$1")", $2)
+    gsub(/ vector.+>/, "= vectorize("$1")", $2)
+    gsub(/ InputFile/, "= getInputFile("$1")", $2)
+    gsub(/ ReplyMarkup/, "= reply_markup", $2)
+    gsub(/ InputMessageContent/, "= input_message_content", $2)
+    gsub(/ location/, "= {[\"@type\"] = '\''location'\'',latitude = latitude,longitude = longitude}", $2)
+    gsub(/ (int[[:digit:]][[:digit:]]|bytes|Bool|double)/, "= "$1, $2)
+    $0="    "$0
   };1' "$tdbot"
 
   awk -i inplace '/^[[:alpha:]][[:alpha:]]/{
@@ -218,17 +262,13 @@ while read -r tl; do
     gsub(/    \["@type"\] = '\''end'\''/, "end")
     gsub(/,'\''/, "'\'',")
     gsub(/\( /, "(")
-    gsub(/=string/, " = tostring()")
     gsub(/^\/\/-/, "-- ")
   };1' "$tdbot"
 
   awk -i inplace '/^function/{
-    gsub(/_/, "")
     gsub(/\(, /, "(")
     gsub(/:[^ ]* /, ", ")
   };1' "$tdbot"
-
-  awk -i inplace '/[[:alpha:]]=[[:alpha:]]/{gsub(/=/, " = ")};1' "$tdbot"
 
   # reduce multiple empty lines into one
   awk -i inplace 'BEGIN{
@@ -242,7 +282,7 @@ while read -r tl; do
     print
   }' "$tdbot"
 
-  # insert license and some functions to top of the script
+  # insert license and some functions to the beginning of the script
   awk -i inplace -v var="$HEADER" 'BEGINFILE{print var}{print}' "$tdbot"
 
   # insert functions return at the end of the script
@@ -250,4 +290,4 @@ while read -r tl; do
 
   # notify user if conversion has been finished
   printf '%s\n' " -- $tdbot has been successfully created."
-done < <(find . -type f -iname "td_api.tl")
+done < <(find . -type f -iname "*.tl")
